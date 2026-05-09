@@ -33,21 +33,27 @@ import { chatWithManus } from '../api'
 
 // 设置页面标题和元数据
 useHead({
-  title: 'AI超级智能体 - 鱼皮AI超级智能体应用平台',
+  title: '南京大学信息管理学院 AI 智能体',
   meta: [
     {
       name: 'description',
-      content: 'AI超级智能体是鱼皮AI超级智能体应用平台的全能助手，能解答各类专业问题，提供精准建议和解决方案'
+      content: 'AI超级智能体是南大信管AI超级智能体应用平台的全能助手，能解答各类专业问题，提供精准建议和解决方案'
     },
     {
       name: 'keywords',
-      content: 'AI超级智能体,智能助手,专业问答,AI问答,专业建议,鱼皮,AI智能体'
+      content: 'AI超级智能体,智能助手,专业问答,AI问答,专业建议,AI智能体'
     }
   ]
 })
 
+// 生成随机会话ID
+const generateChatId = () => {
+  return 'manus_' + Math.random().toString(36).substring(2, 10)
+}
+
 const router = useRouter()
 const messages = ref([])
+const chatId = ref('')
 const connectionStatus = ref('disconnected')
 let eventSource = null
 
@@ -107,7 +113,7 @@ const sendMessage = (message) => {
     messageBuffer = []; // 清空缓冲区
   };
   
-  eventSource = chatWithManus(message)
+  eventSource = chatWithManus(message, chatId.value)
   
   // 监听SSE消息
   eventSource.onmessage = (event) => {

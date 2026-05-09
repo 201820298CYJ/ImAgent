@@ -13,21 +13,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 恋爱大师应用文档加载器
+ * 知识库文档加载器
+ * 从 classpath:document/ 目录加载所有 Markdown 文档
  */
 @Component
 @Slf4j
-public class LoveAppDocumentLoader {
+public class DocumentLoader {
 
     private final ResourcePatternResolver resourcePatternResolver;
 
-    public LoveAppDocumentLoader(ResourcePatternResolver resourcePatternResolver) {
+    public DocumentLoader(ResourcePatternResolver resourcePatternResolver) {
         this.resourcePatternResolver = resourcePatternResolver;
     }
 
     /**
      * 加载多篇 Markdown 文档
-     * @return
+     *
+     * @return 文档列表
      */
     public List<Document> loadMarkdowns() {
         List<Document> allDocuments = new ArrayList<>();
@@ -35,20 +37,17 @@ public class LoveAppDocumentLoader {
             Resource[] resources = resourcePatternResolver.getResources("classpath:document/*.md");
             for (Resource resource : resources) {
                 String filename = resource.getFilename();
-                // 提取文档倒数第 3 和第 2 个字作为标签
-                String status = filename.substring(filename.length() - 6, filename.length() - 4);
                 MarkdownDocumentReaderConfig config = MarkdownDocumentReaderConfig.builder()
                         .withHorizontalRuleCreateDocument(true)
                         .withIncludeCodeBlock(false)
                         .withIncludeBlockquote(false)
                         .withAdditionalMetadata("filename", filename)
-                        .withAdditionalMetadata("status", status)
                         .build();
                 MarkdownDocumentReader markdownDocumentReader = new MarkdownDocumentReader(resource, config);
                 allDocuments.addAll(markdownDocumentReader.get());
             }
         } catch (IOException e) {
-           log.error("Markdown 文档加载失败", e);
+            log.error("Markdown 文档加载失败", e);
         }
         return allDocuments;
     }

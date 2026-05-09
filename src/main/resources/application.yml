@@ -5,29 +5,38 @@ spring:
     active: local
   ai:
     dashscope:
-      api-key: your-api-key
+      api-key: sk-10eacff4931944bca218fc14b52e310d
       chat:
         options:
           model: qwen-plus
-    ollama:
-      base-url: http://localhost:11434
-      chat:
-        model: gemma3:1b
 # 临时注释掉，便于大家开发调试和部署
-#    mcp:
-#      client:
+    mcp:
+      client:
 #        sse:
 #          connections:
 #            server1:
 #              url: http://localhost:8127
-#        stdio:
-#          servers-configuration: classpath:mcp-servers.json
-#    vectorstore:
-#      pgvector:
-#        index-type: HNSW
-#        dimensions: 1536
-#        distance-type: COSINE_DISTANCE
-#        max-document-batch-size: 10000 # Optional: Maximum number of documents per batch
+        stdio:
+          servers-configuration: classpath:mcp-servers.json
+  # Elasticsearch 配置
+  elasticsearch:
+    uris: http://localhost:9200
+    # username: elastic
+    # password: your-password
+
+  # PostgreSQL 数据源配置（pgvector）
+  datasource:
+    url: jdbc:postgresql://localhost:5432/yu_ai_agent
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  # DashScope Rerank 配置
+dashscope:
+  rerank:
+    api-key: ${spring.ai.dashscope.api-key}
+    model: gte-rerank
+
 server:
   port: 8123
   servlet:
@@ -51,7 +60,7 @@ knife4j:
     language: zh_cn
 # searchAPI
 search-api:
-  api-key: 你的 API Key
+  api-key: zEffiRgLvvhtXnvxUGSYD3TN
 # 修改日志级别，查看 Spring AI 更多调用细节
 logging:
   level:

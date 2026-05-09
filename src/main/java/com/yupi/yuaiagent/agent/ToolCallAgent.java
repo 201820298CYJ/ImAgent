@@ -118,7 +118,8 @@ public class ToolCallAgent extends ReActAgent {
         ToolExecutionResult toolExecutionResult = toolCallingManager.executeToolCalls(prompt, toolCallChatResponse);
         // 记录消息上下文，conversationHistory 已经包含了助手消息和工具调用返回的结果
         setMessageList(toolExecutionResult.conversationHistory());
-        ToolResponseMessage toolResponseMessage = (ToolResponseMessage) CollUtil.getLast(toolExecutionResult.conversationHistory());
+        ToolResponseMessage toolResponseMessage = (ToolResponseMessage) CollUtil
+                .getLast(toolExecutionResult.conversationHistory());
         // 判断是否调用了终止工具
         boolean terminateToolCalled = toolResponseMessage.getResponses().stream()
                 .anyMatch(response -> response.name().equals("doTerminate"));

@@ -1,36 +1,11 @@
 <template>
   <footer class="app-footer">
     <div class="footer-content">
-      <div class="footer-section">
-        <div class="footer-logo">
-          <h3>鱼皮AI超级智能体应用平台</h3>
-        </div>
-        <div class="footer-links">
-          <a href="#">《用户协议》</a>
-          <a href="#">《隐私政策》</a>
-        </div>
-      </div>
-      
-      <div class="footer-section">
-        <h4>友情链接</h4>
-        <div class="footer-links">
-          <a href="https://www.mianshiya.com" target="_blank">面试鸭</a>
-          <a href="#" target="_blank">编程导航</a>
-          <a href="#" target="_blank">代码小抄</a>
-        </div>
-      </div>
-      
-      <div class="footer-section">
-        <h4>联系我们</h4>
-        <div class="footer-links">
-          <a href="#">商务合作</a>
-          <a href="#">站长：鱼皮</a>
-        </div>
-      </div>
+      <!-- 已根据需求删除原底部内容 -->
     </div>
     
     <div class="footer-bottom">
-      <p>© {{ currentYear }} 鱼皮AI超级智能体应用平台 - 让AI为你服务</p>
+      <p>© {{ currentYear }} 南京大学信息管理学院智能体</p>
     </div>
   </footer>
 </template>
@@ -45,22 +20,19 @@ const currentYear = computed(() => new Date().getFullYear())
 <style scoped>
 .app-footer {
   background-color: #fff;
-  padding: 40px 0 20px;
-  color: #666;
-  border-top: 1px solid #eee;
+  padding: 0;
+  color: #222;
+  border-top: none;
   width: 100%;
   margin-top: auto;
   position: relative;
   z-index: 2;
 }
 
+/* 如果将来需要显示内容，可用白色背景 */
 .footer-content {
-  max-width: 1200px;
-  margin: 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  padding: 0 20px;
+  background: #fff;
+  display: none;
 }
 
 .footer-section {
@@ -124,12 +96,13 @@ const currentYear = computed(() => new Date().getFullYear())
 }
 
 .footer-bottom {
+  background: #264b8c;
   text-align: center;
-  padding-top: 20px;
-  margin-top: 20px;
-  border-top: 1px solid #eee;
-  color: #999;
-  font-size: 0.9rem;
+  padding: 20px 0 10px 0;
+  color: #fff;
+  font-size: 0.95rem;
+  border-top: 1px solid #e5eaf3;
+  margin: 0;
 }
 
 /* 响应式设计 */

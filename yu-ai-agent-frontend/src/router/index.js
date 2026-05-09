@@ -6,17 +6,17 @@ const routes = [
     name: 'Home',
     component: () => import('../views/Home.vue'),
     meta: {
-      title: '首页 - 鱼皮AI超级智能体应用平台',
-      description: '鱼皮AI超级智能体应用平台提供AI恋爱大师和AI超级智能体服务，满足您的各种AI对话需求'
+      title: '首页-南大信管AI智能体应用平台',
+      description: '南大信管AI超级智能体应用平台提供AI恋爱大师和AI超级智能体服务，满足您的各种AI对话需求'
     }
   },
   {
-    path: '/love-master',
-    name: 'LoveMaster',
-    component: () => import('../views/LoveMaster.vue'),
+    path: '/nju-im-assistant',
+    name: 'NjuImAssistant',
+    component: () => import('../views/NjuImAssistant.vue'),
     meta: {
-      title: 'AI恋爱大师 - 鱼皮AI超级智能体应用平台',
-      description: 'AI恋爱大师是鱼皮AI超级智能体应用平台的专业情感顾问，帮你解答各种恋爱问题，提供情感建议'
+      title: '南京大学信息管理学院AI助手',
+      description: '南京大学信息管理学院AI助手，提供信息管理领域学术辅导、院系资讯与智能问答服务'
     }
   },
   {
@@ -24,8 +24,8 @@ const routes = [
     name: 'SuperAgent',
     component: () => import('../views/SuperAgent.vue'),
     meta: {
-      title: 'AI超级智能体 - 鱼皮AI超级智能体应用平台',
-      description: 'AI超级智能体是鱼皮AI超级智能体应用平台的全能助手，能解答各类专业问题，提供精准建议和解决方案'
+      title: 'AI超级智能体 - 信管AI超级智能体应用平台',
+      description: 'AI超级智能体是南大信管AI超级智能体应用平台的全能助手，能解答各类专业问题，提供精准建议和解决方案'
     }
   }
 ]

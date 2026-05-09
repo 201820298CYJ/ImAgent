@@ -20,13 +20,6 @@ import java.util.List;
 public class FileBasedChatMemory implements ChatMemory {
 
     private final String BASE_DIR;
-    private static final Kryo kryo = new Kryo();
-
-    static {
-        kryo.setRegistrationRequired(false);
-        // 设置实例化策略
-        kryo.setInstantiatorStrategy(new StdInstantiatorStrategy());
-    }
 
     // 构造对象时，指定文件保存目录
     public FileBasedChatMemory(String dir) {
@@ -35,6 +28,13 @@ public class FileBasedChatMemory implements ChatMemory {
         if (!baseDir.exists()) {
             baseDir.mkdirs();
         }
+    }
+    
+    private Kryo getKryo() {
+        Kryo kryo = new Kryo();
+        kryo.setRegistrationRequired(false);
+        kryo.setInstantiatorStrategy(new StdInstantiatorStrategy());
+        return kryo;
     }
 
     @Override
@@ -65,7 +65,7 @@ public class FileBasedChatMemory implements ChatMemory {
         List<Message> messages = new ArrayList<>();
         if (file.exists()) {
             try (Input input = new Input(new FileInputStream(file))) {
-                messages = kryo.readObject(input, ArrayList.class);
+                messages = getKryo().readObject(input, ArrayList.class);
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -76,7 +76,7 @@ public class FileBasedChatMemory implements ChatMemory {
     private void saveConversation(String conversationId, List<Message> messages) {
         File file = getConversationFile(conversationId);
         try (Output output = new Output(new FileOutputStream(file))) {
-            kryo.writeObject(output, messages);
+            getKryo().writeObject(output, messages);
         } catch (IOException e) {
             e.printStackTrace();
         }
