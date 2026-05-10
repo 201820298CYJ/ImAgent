@@ -5,25 +5,31 @@ import com.yupi.yuaiagent.advisor.MyLoggerAdvisor;
 import com.yupi.yuaiagent.rag.QueryRewriter;
 import com.yupi.yuaiagent.tools.KnowledgeBaseQueryTool;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.stereotype.Component;
 
 /**
  * 南京大学信息管理学院智能助理 - 超级智能体
  * <p>
  * 集成了查询重写 + 意图分类 + ReAct 循环的完整 Agent。
- * 记忆压缩通过 {@link AdaptiveMemoryCompressorAdvisor} 以 Advisor 拦截器形式接入 ChatClient 调用链。
+ * <p>
+ * Advisor 链路：
+ * <ul>
+ *     <li>{@link MessageChatMemoryAdvisor}：自动读写 Redis 会话记忆，请求前注入历史、响应后回写</li>
+ *     <li>{@link AdaptiveMemoryCompressorAdvisor}：滑动窗口 + 摘要压缩，控制 LLM 入参 token</li>
+ *     <li>{@link MyLoggerAdvisor}：调用链日志</li>
+ * </ul>
  * 根据意图分类结果动态路由到不同策略：闲聊/知识库问答/复杂任务/礼貌拒绝。
  */
-@Component
 public class YuManus extends ToolCallAgent {
 
     public YuManus(ToolCallback[] allTools, ChatModel dashscopeChatModel, ChatMemory chatMemory,
                    QueryRewriter queryRewriter, IntentClassifier intentClassifier,
                    AdaptiveMemoryCompressorAdvisor memoryCompressorAdvisor,
-                   KnowledgeBaseQueryTool knowledgeBaseQueryTool) {
+                   KnowledgeBaseQueryTool knowledgeBaseQueryTool,
+                   String conversationId) {
         super(allTools);
         this.setChatMemory(chatMemory);
         this.setQueryRewriter(queryRewriter);
@@ -54,9 +60,16 @@ public class YuManus extends ToolCallAgent {
         this.setNextStepPrompt(NEXT_STEP_PROMPT);
         this.setMaxSteps(10);
 
-        // 初始化 AI 对话客户端，注册 Advisor 链：记忆压缩 + 日志
+        // 初始化 AI 对话客户端，注册 Advisor 链：会话记忆 + 记忆压缩 + 日志
+        // 顺序说明：MessageChatMemoryAdvisor 先注入历史，再由压缩 Advisor 控制窗口大小
         ChatClient chatClient = ChatClient.builder(dashscopeChatModel)
-                .defaultAdvisors(memoryCompressorAdvisor, new MyLoggerAdvisor())
+                .defaultAdvisors(
+                        MessageChatMemoryAdvisor.builder(chatMemory)
+                                .conversationId(conversationId)
+                                .build(),
+                        memoryCompressorAdvisor,
+                        new MyLoggerAdvisor()
+                )
                 .build();
         this.setChatClient(chatClient);
     }

@@ -3,7 +3,6 @@ package com.yupi.yuaiagent.controller;
 import com.yupi.yuaiagent.advisor.AdaptiveMemoryCompressorAdvisor;
 import com.yupi.yuaiagent.agent.IntentClassifier;
 import com.yupi.yuaiagent.agent.YuManus;
-import com.yupi.yuaiagent.chatmemory.FileBasedChatMemory;
 import com.yupi.yuaiagent.rag.QueryRewriter;
 import com.yupi.yuaiagent.tools.KnowledgeBaseQueryTool;
 import jakarta.annotation.Resource;
@@ -24,7 +23,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  *     <li>TASK：完整 ReAct 循环，全工具可用（文件/网络/终端/PDF/MCP）</li>
  *     <li>REJECT：礼貌拒绝并引导至官方渠道</li>
  * </ul>
- * 记忆压缩通过 {@link AdaptiveMemoryCompressorAdvisor} 注入 ChatClient 调用链，无需手动调度。
+ * 会话记忆通过 Redis 持久化，由 MessageChatMemoryAdvisor 自动注入 ChatClient 调用链。
+ * 记忆压缩通过 {@link AdaptiveMemoryCompressorAdvisor} 拦截 LLM 入参，二者独立、互不干扰。
  */
 @RestController
 @RequestMapping("/ai")
@@ -48,15 +48,19 @@ public class AiController {
     @Resource
     private KnowledgeBaseQueryTool knowledgeBaseQueryTool;
 
-    /** 使用文件存储记忆，确保重启后会话上下文仍可用 */
-    private final ChatMemory chatMemory = new FileBasedChatMemory(System.getProperty("user.dir") + "/tmp/manus-memory");
+    /**
+     * 基于 Redis 的会话记忆（分布式共享 + TTL 自动过期）
+     */
+    @Resource
+    private ChatMemory chatMemory;
 
     /**
      * 流式调用 Manus 超级智能体（唯一对外 AI 入口）
      */
     @GetMapping("/manus/chat")
     public SseEmitter doChatWithManus(String message, String chatId) {
-        YuManus yuManus = new YuManus(allTools, dashscopeChatModel, chatMemory, queryRewriter, intentClassifier, memoryCompressorAdvisor, knowledgeBaseQueryTool);
+        YuManus yuManus = new YuManus(allTools, dashscopeChatModel, chatMemory, queryRewriter,
+                intentClassifier, memoryCompressorAdvisor, knowledgeBaseQueryTool, chatId);
         yuManus.setConversationId(chatId);
         return yuManus.runStream(message);
     }
