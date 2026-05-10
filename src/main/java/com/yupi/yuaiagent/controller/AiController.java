@@ -1,6 +1,6 @@
 package com.yupi.yuaiagent.controller;
 
-import com.yupi.yuaiagent.agent.AdaptiveMemoryCompressor;
+import com.yupi.yuaiagent.advisor.AdaptiveMemoryCompressorAdvisor;
 import com.yupi.yuaiagent.agent.IntentClassifier;
 import com.yupi.yuaiagent.agent.YuManus;
 import com.yupi.yuaiagent.chatmemory.FileBasedChatMemory;
@@ -24,6 +24,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  *     <li>TASK：完整 ReAct 循环，全工具可用（文件/网络/终端/PDF/MCP）</li>
  *     <li>REJECT：礼貌拒绝并引导至官方渠道</li>
  * </ul>
+ * 记忆压缩通过 {@link AdaptiveMemoryCompressorAdvisor} 注入 ChatClient 调用链，无需手动调度。
  */
 @RestController
 @RequestMapping("/ai")
@@ -42,7 +43,7 @@ public class AiController {
     private IntentClassifier intentClassifier;
 
     @Resource
-    private AdaptiveMemoryCompressor memoryCompressor;
+    private AdaptiveMemoryCompressorAdvisor memoryCompressorAdvisor;
 
     @Resource
     private KnowledgeBaseQueryTool knowledgeBaseQueryTool;
@@ -55,7 +56,7 @@ public class AiController {
      */
     @GetMapping("/manus/chat")
     public SseEmitter doChatWithManus(String message, String chatId) {
-        YuManus yuManus = new YuManus(allTools, dashscopeChatModel, chatMemory, queryRewriter, intentClassifier, memoryCompressor, knowledgeBaseQueryTool);
+        YuManus yuManus = new YuManus(allTools, dashscopeChatModel, chatMemory, queryRewriter, intentClassifier, memoryCompressorAdvisor, knowledgeBaseQueryTool);
         yuManus.setConversationId(chatId);
         return yuManus.runStream(message);
     }

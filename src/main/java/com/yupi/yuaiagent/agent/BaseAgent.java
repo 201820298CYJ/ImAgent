@@ -3,6 +3,9 @@ package com.yupi.yuaiagent.agent;
 import cn.hutool.core.util.StrUtil;
 import com.yupi.yuaiagent.agent.model.AgentState;
 import com.yupi.yuaiagent.agent.model.IntentType;
+import com.yupi.yuaiagent.agent.sink.BufferedOutputSink;
+import com.yupi.yuaiagent.agent.sink.OutputSink;
+import com.yupi.yuaiagent.agent.sink.SseOutputSink;
 import com.yupi.yuaiagent.rag.QueryRewriter;
 import com.yupi.yuaiagent.tools.KnowledgeBaseQueryTool;
 import lombok.Data;
@@ -13,7 +16,6 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -21,15 +23,25 @@ import java.util.concurrent.CompletableFuture;
 /**
  * 抽象基础代理类，用于管理代理状态和执行流程。
  * <p>
- * 提供状态转换、内存管理和基于步骤的执行循环的基础功能。
- * 支持查询重写（上下文感知）和意图分类（动态调整 Agent 策略）。
- * 子类必须实现step方法。
+ * 执行链路：查询重写 → 意图分类 → 按意图路由到对应 handler。
+ * <pre>
+ *   run / runStream
+ *     ├─ execute(prompt, sink)
+ *     │    ├─ preProcess  → (intent, processedPrompt)
+ *     │    └─ dispatch
+ *     │         ├─ REJECT    → handleRejectIntent
+ *     │         ├─ CHAT      → handleChatIntent
+ *     │         ├─ KNOWLEDGE → handleKnowledgeIntent (失败降级 TASK)
+ *     │         └─ TASK      → handleTaskIntent (ReAct 循环)
+ *     └─ sink.complete / completeWithError
+ * </pre>
+ * 子类必须实现 {@link #step()}，定义 ReAct 单步行为。
  */
 @Data
 @Slf4j
 public abstract class BaseAgent {
 
-    // 核心属性
+    // ============== 核心属性 ==============
     private String name;
 
     // 提示词
@@ -49,299 +61,52 @@ public abstract class BaseAgent {
     // Memory 记忆（需要自主维护会话上下文）
     private List<Message> messageList = new ArrayList<>();
 
-    // 对话记忆组件
+    // ============== 协作组件 ==============
+    /** 对话记忆组件（多轮上下文检索） */
     private ChatMemory chatMemory;
-    // 会话 ID
+    /** 会话 ID */
     private String conversationId;
 
-    // 查询重写器（多轮对话上下文感知）
+    /** 查询重写器（多轮对话上下文感知） */
     private QueryRewriter queryRewriter;
-    // 意图分类器（动态调整 Agent 行为策略）
+    /** 意图分类器（驱动路由分发） */
     private IntentClassifier intentClassifier;
-    // 自适应记忆压缩器（防止 messageList 无限膨胀）
-    private AdaptiveMemoryCompressor memoryCompressor;
-    // 知识库查询工具（KNOWLEDGE 意图时直接调用 RAG 链路）
+    /** 知识库查询工具（KNOWLEDGE 意图直接调用 RAG 链路） */
     private KnowledgeBaseQueryTool knowledgeBaseQueryTool;
-    // 上一次 preProcess 识别的意图类型
-    private IntentType lastIntent;
-    // 原始系统提示词（意图分类时动态拼接，需保留原始值）
-    private String originalSystemPrompt;
-    // 原始最大步数（意图分类时动态调整，需保留原始值）
-    private int originalMaxSteps;
+
+    // 拒绝话术常量
+    private static final String REJECT_REPLY =
+            "非常抱歉，该问题超出了我的服务范围。建议您通过南京大学信息管理学院官方渠道获取更多帮助。";
+
+    // ===================================================================
+    //                            对外入口
+    // ===================================================================
 
     /**
-     * 查询重写 + 意图分类的前置处理流程
-     * 流程：先查询重写补全语义 → 再意图分类动态调整策略
-     *
-     * @param userPrompt 用户原始输入
-     * @return 处理后的 prompt，如果 REJECT 返回 null
-     */
-    private String preProcess(String userPrompt) {
-        String processedPrompt = userPrompt;
-
-        // Step 1: 查询重写（先补全语义，消除指代歧义）
-        if (queryRewriter != null && chatMemory != null && StrUtil.isNotBlank(conversationId)) {
-            processedPrompt = queryRewriter.doQueryRewrite(userPrompt, chatMemory, conversationId);
-            log.info("[{}] 查询重写：{} -> {}", name, userPrompt, processedPrompt);
-        }
-
-        // Step 2: 意图分类（基于重写后的完整语义进行分类）
-        if (intentClassifier != null) {
-            // 首次调用时保存原始配置
-            if (originalSystemPrompt == null) {
-                originalSystemPrompt = systemPrompt;
-            }
-            if (originalMaxSteps == 0) {
-                originalMaxSteps = maxSteps;
-            }
-            // 每次 run 都基于原始配置重新调整
-            systemPrompt = originalSystemPrompt;
-            maxSteps = originalMaxSteps;
-
-            IntentType intent = intentClassifier.classify(processedPrompt);
-            log.info("[{}] 意图分类结果：{}", name, intent);
-            lastIntent = intent;
-
-            switch (intent) {
-                case CHAT:
-                    maxSteps = 1;
-                    systemPrompt = systemPrompt
-                            + "\n当前为闲聊模式，直接友好回复即可，无需调用任何工具，直接调用 terminate 结束。";
-                    break;
-                case KNOWLEDGE:
-                    // 知识库问答模式：跳过 ReAct 循环，直接走 RAG 链路
-                    break;
-                case TASK:
-                    // 复杂任务模式：保持原始配置不变
-                    break;
-                case REJECT:
-                    // 返回 null 表示拒绝，由调用方处理
-                    return null;
-            }
-        }
-
-        return processedPrompt;
-    }
-
-    /**
-     * KNOWLEDGE 意图直接走 RAG 链路：检索知识库 + LLM 生成回答
-     * 跳过 ReAct 循环，减少不必要的工具调用开销
-     *
-     * @param processedPrompt 经过查询重写后的用户问题
-     * @return LLM 基于知识库上下文生成的回答
-     */
-    private String knowledgeDirectAnswer(String processedPrompt) {
-        if (knowledgeBaseQueryTool == null) {
-            log.warn("[{}] knowledgeBaseQueryTool 未注入，降级走 ReAct 循环", name);
-            return null;
-        }
-        // 1. 调用 RAG 链路检索知识库（Hybrid Search + Rerank）
-        String ragContext = knowledgeBaseQueryTool.queryKnowledgeBase(processedPrompt);
-        log.info("[{}] RAG 直接检索完成，上下文长度：{}", name, ragContext.length());
-
-        // 2. 构造带知识库上下文的 Prompt，让 LLM 生成最终回答
-        String knowledgePrompt = String.format("""
-                请基于以下知识库检索结果回答用户问题。如果检索结果中没有相关信息，请如实告知用户。
-                
-                【知识库检索结果】
-                %s
-                
-                【用户问题】
-                %s
-                """, ragContext, processedPrompt);
-
-        String answer = chatClient.prompt()
-                .system(systemPrompt)
-                .user(knowledgePrompt)
-                .call()
-                .content();
-        log.info("[{}] KNOWLEDGE 直接回答完成", name);
-        return answer;
-    }
-
-    /**
-     * 运行代理
-     *
-     * @param userPrompt 用户提示词
-     * @return 执行结果
+     * 同步运行代理，返回最终聚合结果。
      */
     public String run(String userPrompt) {
-        // 1、基础校验
-        if (this.state != AgentState.IDLE) {
-            throw new RuntimeException("Cannot run agent from state: " + this.state);
-        }
-        if (StrUtil.isBlank(userPrompt)) {
-            throw new RuntimeException("Cannot run agent with empty user prompt");
-        }
-        // 2、执行，更改状态
-        this.state = AgentState.RUNNING;
-
-        // 3、查询重写 + 意图分类前置处理
-        String processedPrompt = preProcess(userPrompt);
-        if (processedPrompt == null) {
-            // REJECT 意图：直接返回拒绝消息
-            state = AgentState.FINISHED;
-            return "非常抱歉，该问题超出了我的服务范围。建议您通过南京大学信息管理学院官方渠道获取更多帮助。";
-        }
-
-        // 4、KNOWLEDGE 意图：跳过 ReAct 循环，直接走 RAG 链路
-        if (lastIntent == IntentType.KNOWLEDGE) {
-            try {
-                String answer = knowledgeDirectAnswer(processedPrompt);
-                if (answer != null) {
-                    state = AgentState.FINISHED;
-                    return answer;
-                }
-                // 降级：knowledgeBaseQueryTool 未注入，继续走 ReAct 循环
-                log.info("[{}] KNOWLEDGE 直接回答降级，进入 ReAct 循环", name);
-            } catch (Exception e) {
-                log.error("[{}] KNOWLEDGE 直接回答异常，降级走 ReAct 循环", name, e);
-            }
-        }
-
-        // 记录消息上下文（使用重写后的语句进入 ReAct 循环）
-        messageList.add(new UserMessage(processedPrompt));
-        // 保存结果列表
-        List<String> results = new ArrayList<>();
-        try {
-            // 执行循环
-            for (int i = 0; i < maxSteps && state != AgentState.FINISHED; i++) {
-                int stepNumber = i + 1;
-                currentStep = stepNumber;
-                log.info("Executing step {}/{}", stepNumber, maxSteps);
-                // 单步执行
-                String stepResult = step();
-                String result = "Step " + stepNumber + ": " + stepResult;
-                results.add(result);
-                // 自适应记忆压缩：防止 messageList 在多步骤执行中无限膨胀
-                compressMemoryIfNeeded();
-            }
-            // 检查是否超出步骤限制
-            if (currentStep >= maxSteps) {
-                state = AgentState.FINISHED;
-                results.add("Terminated: Reached max steps (" + maxSteps + ")");
-            }
-            return String.join("\n", results);
-        } catch (Exception e) {
-            state = AgentState.ERROR;
-            log.error("error executing agent", e);
-            return "执行错误" + e.getMessage();
-        } finally {
-            // 4、清理资源
-            this.cleanup();
-        }
+        BufferedOutputSink sink = new BufferedOutputSink();
+        execute(userPrompt, sink);
+        return sink.toAggregatedString();
     }
 
     /**
-     * 运行代理（流式输出）
-     *
-     * @param userPrompt 用户提示词
-     * @return 执行结果
+     * 流式运行代理，过程结果通过 SSE 推送。
      */
     public SseEmitter runStream(String userPrompt) {
-        // 创建一个超时时间较长的 SseEmitter
-        SseEmitter sseEmitter = new SseEmitter(300000L); // 5 分钟超时
-        // 使用线程异步处理，避免阻塞主线程
-        CompletableFuture.runAsync(() -> {
-            // 1、基础校验
-            try {
-                if (this.state != AgentState.IDLE) {
-                    sseEmitter.send("错误：无法从状态运行代理：" + this.state);
-                    sseEmitter.complete();
-                    return;
-                }
-                if (StrUtil.isBlank(userPrompt)) {
-                    sseEmitter.send("错误：不能使用空提示词运行代理");
-                    sseEmitter.complete();
-                    return;
-                }
-            } catch (Exception e) {
-                sseEmitter.completeWithError(e);
-                return;
-            }
-            // 2、执行，更改状态
-            this.state = AgentState.RUNNING;
+        SseEmitter sseEmitter = new SseEmitter(300_000L); // 5 分钟超时
+        SseOutputSink sink = new SseOutputSink(sseEmitter);
 
-            // 3、查询重写 + 意图分类前置处理
-            String processedPrompt = preProcess(userPrompt);
-            if (processedPrompt == null) {
-                // REJECT 意图：直接发送拒绝消息并结束
-                state = AgentState.FINISHED;
-                try {
-                    sseEmitter.send("非常抱歉，该问题超出了我的服务范围。建议您通过南京大学信息管理学院官方渠道获取更多帮助。");
-                    sseEmitter.complete();
-                } catch (IOException ex) {
-                    sseEmitter.completeWithError(ex);
-                }
-                return;
-            }
+        // 异步执行，避免阻塞主线程
+        CompletableFuture.runAsync(() -> execute(userPrompt, sink));
 
-            // 4、KNOWLEDGE 意图：跳过 ReAct 循环，直接走 RAG 链路
-            if (lastIntent == IntentType.KNOWLEDGE) {
-                try {
-                    String answer = knowledgeDirectAnswer(processedPrompt);
-                    if (answer != null) {
-                        state = AgentState.FINISHED;
-                        sseEmitter.send(answer);
-                        sseEmitter.complete();
-                        return;
-                    }
-                    // 降级：knowledgeBaseQueryTool 未注入，继续走 ReAct 循环
-                    log.info("[{}] KNOWLEDGE 直接回答降级，进入 ReAct 循环", name);
-                } catch (Exception e) {
-                    log.error("[{}] KNOWLEDGE 直接回答异常，降级走 ReAct 循环", name, e);
-                }
-            }
-
-            // 记录消息上下文（使用重写后的语句进入 ReAct 循环）
-            messageList.add(new UserMessage(processedPrompt));
-            // 保存结果列表
-            List<String> results = new ArrayList<>();
-            try {
-                // 执行循环
-                for (int i = 0; i < maxSteps && state != AgentState.FINISHED; i++) {
-                    int stepNumber = i + 1;
-                    currentStep = stepNumber;
-                    log.info("Executing step {}/{}", stepNumber, maxSteps);
-                    // 单步执行
-                    String stepResult = step();
-                    String result = "Step " + stepNumber + ": " + stepResult;
-                    results.add(result);
-                    // 输出当前每一步的结果到 SSE
-                    sseEmitter.send(result);
-                    // 自适应记忆压缩：防止 messageList 在多步骤执行中无限膨胀
-                    compressMemoryIfNeeded();
-                }
-                // 检查是否超出步骤限制
-                if (currentStep >= maxSteps) {
-                    state = AgentState.FINISHED;
-                    results.add("Terminated: Reached max steps (" + maxSteps + ")");
-                    sseEmitter.send("执行结束：达到最大步骤（" + maxSteps + "）");
-                }
-                // 正常完成
-                sseEmitter.complete();
-            } catch (Exception e) {
-                state = AgentState.ERROR;
-                log.error("error executing agent", e);
-                try {
-                    sseEmitter.send("执行错误：" + e.getMessage());
-                    sseEmitter.complete();
-                } catch (IOException ex) {
-                    sseEmitter.completeWithError(ex);
-                }
-            } finally {
-                // 4、清理资源
-                this.cleanup();
-            }
-        });
-
-        // 设置超时回调
+        // 注册 SSE 生命周期回调
         sseEmitter.onTimeout(() -> {
             this.state = AgentState.ERROR;
             this.cleanup();
             log.warn("SSE connection timeout");
         });
-        // 设置完成回调
         sseEmitter.onCompletion(() -> {
             if (this.state == AgentState.RUNNING) {
                 this.state = AgentState.FINISHED;
@@ -352,30 +117,186 @@ public abstract class BaseAgent {
         return sseEmitter;
     }
 
-    /**
-     * 定义单个步骤
-     *
-     * @return
-     */
-    public abstract String step();
+    // ===================================================================
+    //                       核心执行流程（统一）
+    // ===================================================================
 
     /**
-     * 清理资源
+     * 统一执行流程：校验 → 前置处理 → 路由分发。
+     * 任何异常都会通过 sink.completeWithError 兜底，保证调用方能拿到响应。
      */
+    private void execute(String userPrompt, OutputSink sink) {
+        // 1. 基础校验
+        if (this.state != AgentState.IDLE) {
+            sink.completeWithError("错误：无法从状态运行代理：" + this.state);
+            return;
+        }
+        if (StrUtil.isBlank(userPrompt)) {
+            sink.completeWithError("错误：不能使用空提示词运行代理");
+            return;
+        }
+
+        this.state = AgentState.RUNNING;
+        try {
+            // 2. 前置处理（查询重写 + 意图分类）
+            ProcessedPrompt processed = preProcess(userPrompt);
+
+            // 3. 按意图路由分发
+            dispatchByIntent(processed, sink);
+
+            // 4. 标记成功完成
+            sink.complete();
+        } catch (Exception e) {
+            this.state = AgentState.ERROR;
+            log.error("[{}] 执行异常", name, e);
+            sink.completeWithError("执行错误：" + e.getMessage());
+        } finally {
+            this.cleanup();
+        }
+    }
+
+    /**
+     * 前置处理：查询重写 + 意图分类，输出干净的 (intent, prompt) 载体。
+     * 不再修改任何全局状态，保证执行流程可重入。
+     */
+    private ProcessedPrompt preProcess(String userPrompt) {
+        // Step 1: 查询重写（补全语义、消除指代歧义）
+        String processedPrompt = userPrompt;
+        if (queryRewriter != null && chatMemory != null && StrUtil.isNotBlank(conversationId)) {
+            processedPrompt = queryRewriter.doQueryRewrite(userPrompt, chatMemory, conversationId);
+            log.info("[{}] 查询重写：{} -> {}", name, userPrompt, processedPrompt);
+        }
+
+        // Step 2: 意图分类（基于重写后的完整语义）
+        IntentType intent = IntentType.TASK; // 缺省走完整 ReAct
+        if (intentClassifier != null) {
+            intent = intentClassifier.classify(processedPrompt);
+            log.info("[{}] 意图分类结果：{}", name, intent);
+        }
+        return new ProcessedPrompt(intent, processedPrompt);
+    }
+
+    /**
+     * 意图路由分发：每种意图对应一个 handler，逻辑高内聚。
+     */
+    private void dispatchByIntent(ProcessedPrompt processed, OutputSink sink) {
+        switch (processed.intent()) {
+            case REJECT    -> handleRejectIntent(sink);
+            case CHAT      -> handleChatIntent(processed.prompt(), sink);
+            case KNOWLEDGE -> handleKnowledgeIntent(processed.prompt(), sink);
+            case TASK      -> handleTaskIntent(processed.prompt(), sink);
+        }
+    }
+
+    // ===================================================================
+    //                         意图 Handler
+    // ===================================================================
+
+    /**
+     * REJECT 意图：直接返回拒绝话术，不调用任何 LLM。
+     */
+    private void handleRejectIntent(OutputSink sink) {
+        log.info("[{}] REJECT 路由：返回拒绝话术", name);
+        state = AgentState.FINISHED;
+        sink.send(REJECT_REPLY);
+    }
+
+    /**
+     * CHAT 意图：闲聊场景一次性直答，不进入 ReAct，不调用工具。
+     */
+    private void handleChatIntent(String processedPrompt, OutputSink sink) {
+        log.info("[{}] CHAT 路由：一次性直答", name);
+        String chatSystemPrompt = systemPrompt
+                + "\n当前为闲聊模式，请用专业、亲切的语言友好回复，无需调用任何工具。";
+        String answer = chatClient.prompt()
+                .system(chatSystemPrompt)
+                .user(processedPrompt)
+                .call()
+                .content();
+        state = AgentState.FINISHED;
+        sink.send(answer);
+    }
+
+    /**
+     * KNOWLEDGE 意图：跳过 ReAct，直接走 RAG（Hybrid Search + Rerank）+ LLM 生成。
+     * 工具未注入或调用异常时，自动降级到 TASK 完整 ReAct 循环。
+     */
+    private void handleKnowledgeIntent(String processedPrompt, OutputSink sink) {
+        if (knowledgeBaseQueryTool == null) {
+            log.warn("[{}] knowledgeBaseQueryTool 未注入，降级走 ReAct 循环", name);
+            handleTaskIntent(processedPrompt, sink);
+            return;
+        }
+        try {
+            // 1. 检索知识库
+            String ragContext = knowledgeBaseQueryTool.queryKnowledgeBase(processedPrompt);
+            log.info("[{}] RAG 检索完成，上下文长度：{}", name, ragContext.length());
+
+            // 2. 构造带知识库上下文的 Prompt
+            String knowledgePrompt = String.format("""
+                    请基于以下知识库检索结果回答用户问题。如果检索结果中没有相关信息，请如实告知用户。
+                    
+                    【知识库检索结果】
+                    %s
+                    
+                    【用户问题】
+                    %s
+                    """, ragContext, processedPrompt);
+
+            // 3. LLM 直答
+            String answer = chatClient.prompt()
+                    .system(systemPrompt)
+                    .user(knowledgePrompt)
+                    .call()
+                    .content();
+            log.info("[{}] KNOWLEDGE 直接回答完成", name);
+            state = AgentState.FINISHED;
+            sink.send(answer);
+        } catch (Exception e) {
+            log.error("[{}] KNOWLEDGE 直接回答异常，降级走 ReAct 循环", name, e);
+            handleTaskIntent(processedPrompt, sink);
+        }
+    }
+
+    /**
+     * TASK 意图：完整 ReAct 循环，全工具可用。
+     */
+    private void handleTaskIntent(String processedPrompt, OutputSink sink) {
+        log.info("[{}] TASK 路由：进入 ReAct 循环（maxSteps={}）", name, maxSteps);
+        // 用户问题入消息上下文（驱动 ReAct）
+        messageList.add(new UserMessage(processedPrompt));
+
+        for (int i = 0; i < maxSteps && state != AgentState.FINISHED; i++) {
+            currentStep = i + 1;
+            log.info("Executing step {}/{}", currentStep, maxSteps);
+            String stepResult = step();
+            String result = "Step " + currentStep + ": " + stepResult;
+            sink.send(result);
+        }
+        // 达到上限仍未结束，强制收尾
+        if (currentStep >= maxSteps && state != AgentState.FINISHED) {
+            state = AgentState.FINISHED;
+            sink.send("执行结束：达到最大步骤（" + maxSteps + "）");
+        }
+    }
+
+    // ===================================================================
+    //                            扩展点
+    // ===================================================================
+
+    /** 子类实现 ReAct 单步逻辑 */
+    public abstract String step();
+
+    /** 清理资源（子类可覆盖） */
     protected void cleanup() {
         // 子类可以重写此方法来清理资源
     }
 
-    /**
-     * 自适应记忆压缩：在每个 step 执行后检查 messageList 是否需要压缩
-     */
-    private void compressMemoryIfNeeded() {
-        if (memoryCompressor != null) {
-            List<Message> compressed = memoryCompressor.compressIfNeeded(messageList);
-            if (compressed != messageList) {
-                // 压缩发生了，替换 messageList
-                messageList = new ArrayList<>(compressed);
-            }
-        }
+    // ===================================================================
+    //                          内部数据载体
+    // ===================================================================
+
+    /** preProcess 返回值：意图类型 + 处理后的 prompt */
+    private record ProcessedPrompt(IntentType intent, String prompt) {
     }
 }

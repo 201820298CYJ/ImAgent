@@ -1,5 +1,6 @@
 package com.yupi.yuaiagent.agent;
 
+import com.yupi.yuaiagent.advisor.AdaptiveMemoryCompressorAdvisor;
 import com.yupi.yuaiagent.advisor.MyLoggerAdvisor;
 import com.yupi.yuaiagent.rag.QueryRewriter;
 import com.yupi.yuaiagent.tools.KnowledgeBaseQueryTool;
@@ -12,7 +13,8 @@ import org.springframework.stereotype.Component;
 /**
  * 南京大学信息管理学院智能助理 - 超级智能体
  * <p>
- * 集成了查询重写 + 意图分类 + 自适应记忆压缩 + ReAct 循环的完整 Agent。
+ * 集成了查询重写 + 意图分类 + ReAct 循环的完整 Agent。
+ * 记忆压缩通过 {@link AdaptiveMemoryCompressorAdvisor} 以 Advisor 拦截器形式接入 ChatClient 调用链。
  * 根据意图分类结果动态路由到不同策略：闲聊/知识库问答/复杂任务/礼貌拒绝。
  */
 @Component
@@ -20,14 +22,14 @@ public class YuManus extends ToolCallAgent {
 
     public YuManus(ToolCallback[] allTools, ChatModel dashscopeChatModel, ChatMemory chatMemory,
                    QueryRewriter queryRewriter, IntentClassifier intentClassifier,
-                   AdaptiveMemoryCompressor memoryCompressor, KnowledgeBaseQueryTool knowledgeBaseQueryTool) {
+                   AdaptiveMemoryCompressorAdvisor memoryCompressorAdvisor,
+                   KnowledgeBaseQueryTool knowledgeBaseQueryTool) {
         super(allTools);
         this.setChatMemory(chatMemory);
         this.setQueryRewriter(queryRewriter);
         this.setIntentClassifier(intentClassifier);
-        this.setMemoryCompressor(memoryCompressor);
         this.setKnowledgeBaseQueryTool(knowledgeBaseQueryTool);
-        this.setName("yuManus");
+        this.setName("imManus");
 
         String SYSTEM_PROMPT = """
                 你是南京大学信息管理学院的智能AI助理，具备以下核心能力：
@@ -52,9 +54,9 @@ public class YuManus extends ToolCallAgent {
         this.setNextStepPrompt(NEXT_STEP_PROMPT);
         this.setMaxSteps(10);
 
-        // 初始化 AI 对话客户端
+        // 初始化 AI 对话客户端，注册 Advisor 链：记忆压缩 + 日志
         ChatClient chatClient = ChatClient.builder(dashscopeChatModel)
-                .defaultAdvisors(new MyLoggerAdvisor())
+                .defaultAdvisors(memoryCompressorAdvisor, new MyLoggerAdvisor())
                 .build();
         this.setChatClient(chatClient);
     }
