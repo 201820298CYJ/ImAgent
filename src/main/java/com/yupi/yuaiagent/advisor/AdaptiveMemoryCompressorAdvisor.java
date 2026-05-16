@@ -22,15 +22,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * 自适应记忆压缩 Advisor
+ * Token 感知的自适应记忆压缩 Advisor
  * <p>
  * 作为 Spring AI 的拦截器（Advisor），在请求到达 LLM 之前对消息列表执行
- * <strong>滑动窗口 + 动态压缩</strong>，并将压缩结果<strong>同步回写 Redis</strong>
+ * <strong>Token 预算感知 + 动态压缩</strong>，并将压缩结果<strong>同步回写 Redis</strong>
  * 实现"存储级压缩"：
  * <ul>
- *     <li>滑动窗口大小 = {@link #WINDOW_SIZE}（20）</li>
- *     <li>当 messages.size() >= 20 时，将前 {@link #COMPRESS_COUNT}（10）条压缩为 1 条 SystemMessage 摘要</li>
- *     <li>压缩后保留：1 条摘要 + 后 10 条原文 = 11 条，回到窗口内</li>
+ *     <li>会话记忆 Token 预算 = {@link #MAX_MEMORY_TOKENS}（8000），
+ *         基于实际场景推算：混合对话约 800 token/轮，目标保留 10 轮上下文</li>
+ *     <li>当消息列表估算 token 超过预算时，从最早的消息开始动态计算切割点，
+ *         将超出部分压缩为 1 条 SystemMessage 摘要</li>
  *     <li>压缩后的消息列表通过 {@link RedisChatMemory#replace} 原子回写 Redis</li>
  * </ul>
  * <p>
@@ -42,11 +43,21 @@ import java.util.concurrent.TimeoutException;
 @Slf4j
 public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, StreamAroundAdvisor {
 
-    /** 滑动窗口大小：消息数达到此值时触发压缩 */
-    private static final int WINDOW_SIZE = 20;
+    /**
+     * 会话记忆 Token 预算上限。
+     * <p>
+     * 推算依据（qwen-plus，100 万上下文窗口，压缩目的是控制成本与噪声）：
+     * <ul>
+     *     <li>纯对话轮次：~400 token/轮</li>
+     *     <li>带工具/RAG 轮次：~1500-2500 token/轮（工具返回 + 助手回复会被 Advisor 写入 Redis）</li>
+     *     <li>混合场景加权中位数：~800 token/轮</li>
+     *     <li>目标保留 10 轮上下文 → 800 × 10 = 8000</li>
+     * </ul>
+     */
+    private static final int MAX_MEMORY_TOKENS = 8000;
 
-    /** 触发压缩时，对最早的多少条消息做摘要压缩 */
-    private static final int COMPRESS_COUNT = 10;
+    /** Token 估算系数：中文 1 字符 ≈ 1.5 token（覆盖中英文混合场景的粗略估算） */
+    private static final double TOKEN_PER_CHAR = 1.5;
 
     /** 单条消息文本截断长度（避免摘要请求过长） */
     private static final int SINGLE_MESSAGE_TRUNCATE = 500;
@@ -81,7 +92,6 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
 
     @Override
     public int getOrder() {
-        // 设为较高优先级（数字小先执行），保证压缩发生在日志打印等其他 Advisor 之前
         return -1000;
     }
 
@@ -95,25 +105,40 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
         return chain.nextAroundStream(compressIfNeeded(advisedRequest));
     }
 
+    // ===================================================================
+    //                         Token 感知压缩核心
+    // ===================================================================
+
     /**
-     * 滑动窗口压缩核心逻辑：
+     * Token 感知压缩核心逻辑：
      * <ol>
-     *     <li>当消息数达到窗口阈值时，将最早的 COMPRESS_COUNT 条异步压缩为一条摘要</li>
-     *     <li>压缩后的消息列表替换原请求中的 messages</li>
-     *     <li>压缩后的消息列表通过 {@link RedisChatMemory#replace} 原子回写 Redis（存储级压缩）</li>
+     *     <li>估算当前消息列表的总 token 量</li>
+     *     <li>未超预算则直接放行</li>
+     *     <li>超预算时，动态计算切割点——从最早消息累加 token，直到累加量 >= 超出量</li>
+     *     <li>将切割出的早期消息异步压缩为一条摘要 SystemMessage</li>
+     *     <li>压缩后的完整消息列表原子回写 Redis（存储级压缩）</li>
      * </ol>
      */
     private AdvisedRequest compressIfNeeded(AdvisedRequest request) {
         List<Message> messages = request.messages();
-        if (messages == null || messages.size() < WINDOW_SIZE) {
+        if (messages == null || messages.isEmpty()) {
             return request;
         }
 
-        log.info("[记忆压缩] 触发滑动窗口压缩，当前消息数: {}，压缩前 {} 条为摘要",
-                messages.size(), COMPRESS_COUNT);
+        int totalTokens = estimateTokens(messages);
+        if (totalTokens <= MAX_MEMORY_TOKENS) {
+            return request;
+        }
 
-        List<Message> earlyMessages = messages.subList(0, COMPRESS_COUNT);
-        List<Message> remainMessages = messages.subList(COMPRESS_COUNT, messages.size());
+        // 计算超出量和动态切割点
+        int excess = totalTokens - MAX_MEMORY_TOKENS;
+        int cutIndex = findCutIndex(messages, excess);
+
+        log.info("[记忆压缩] 触发 Token 感知压缩，总 token≈{}，预算={}，超出≈{}，压缩前 {} 条",
+                totalTokens, MAX_MEMORY_TOKENS, excess, cutIndex);
+
+        List<Message> earlyMessages = messages.subList(0, cutIndex);
+        List<Message> remainMessages = messages.subList(cutIndex, messages.size());
 
         // 异步生成摘要，带超时控制
         String summary = summarizeAsync(earlyMessages);
@@ -122,14 +147,57 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
         compressed.add(new SystemMessage("以下是之前对话的摘要（用于保持上下文连贯性）：\n" + summary));
         compressed.addAll(remainMessages);
 
-        log.info("[记忆压缩] 压缩完成: {} 条 → {} 条（含 1 条摘要）",
-                messages.size(), compressed.size());
+        int compressedTokens = estimateTokens(compressed);
+        log.info("[记忆压缩] 压缩完成: {} 条(≈{} token) → {} 条(≈{} token)",
+                messages.size(), totalTokens, compressed.size(), compressedTokens);
 
         // 存储级压缩：将压缩后的消息列表原子回写 Redis
         writeBackToRedis(compressed);
 
         return AdvisedRequest.from(request).messages(compressed).build();
     }
+
+    /**
+     * 估算消息列表的总 token 数。
+     * 采用字符数 × 系数的粗略估算，中文 1 字 ≈ 1.5 token，足以用于预算判断。
+     */
+    private int estimateTokens(List<Message> messages) {
+        int totalChars = 0;
+        for (Message msg : messages) {
+            String text = msg.getText();
+            if (text != null) {
+                totalChars += text.length();
+            }
+        }
+        return (int) (totalChars * TOKEN_PER_CHAR);
+    }
+
+    /**
+     * 从最早的消息开始累加 token，找到刚好能覆盖超出量的切割索引。
+     * <p>
+     * 保底至少切 1 条（避免死循环：消息总量超预算但每条都很小时），
+     * 且至少保留最后 1 条消息不被压缩。
+     *
+     * @param messages 完整消息列表
+     * @param excess   需要压缩掉的 token 量
+     * @return 切割索引（前 cutIndex 条将被压缩为摘要）
+     */
+    private int findCutIndex(List<Message> messages, int excess) {
+        int accumulated = 0;
+        for (int i = 0; i < messages.size() - 1; i++) {
+            String text = messages.get(i).getText();
+            accumulated += (int) ((text != null ? text.length() : 0) * TOKEN_PER_CHAR);
+            if (accumulated >= excess) {
+                return i + 1;
+            }
+        }
+        // 兜底：保留最后一条，其余全部压缩
+        return Math.max(1, messages.size() - 1);
+    }
+
+    // ===================================================================
+    //                         Redis 回写
+    // ===================================================================
 
     /**
      * 将压缩后的消息列表回写 Redis，替换原全量历史。
@@ -143,15 +211,13 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
         }
     }
 
+    // ===================================================================
+    //                         摘要生成
+    // ===================================================================
+
     /**
      * 异步生成摘要，带超时控制。
-     * <p>
-     * 通过 {@link CompletableFuture} 在独立线程中调用轻量模型生成摘要，
-     * 主线程等待最多 {@link #SUMMARY_TIMEOUT_SECONDS} 秒。
      * 超时或异常时降级为简单截断兜底，确保不阻塞主调用链过长时间。
-     *
-     * @param messages 需要被压缩的早期消息
-     * @return 摘要文本
      */
     private String summarizeAsync(List<Message> messages) {
         CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> doSummarize(messages));
