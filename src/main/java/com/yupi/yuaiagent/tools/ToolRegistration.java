@@ -8,7 +8,6 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallbacks;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -18,12 +17,21 @@ import java.util.List;
 
 /**
  * 集中的工具注册类
+ *
+ * 已迁移至 MCP Server（yu-agent-tools-mcp-server）的工具：
+ * - WebSearchTool
+ * - WebScrapingTool
+ * - PDFGenerationTool
+ * - ResourceDownloadTool
+ *
+ * 以下工具保留在本地：
+ * - FileOperationTool（依赖本地文件系统）
+ * - TerminalOperationTool（依赖宿主机环境）
+ * - TerminateTool（Agent 内部流程控制）
+ * - KnowledgeBaseQueryTool（依赖 RAG 基础设施）
  */
 @Configuration
 public class ToolRegistration {
-
-    @Value("${search-api.api-key}")
-    private String searchApiKey;
 
     @Autowired(required = false)
     private ToolCallbackProvider toolCallbackProvider;
@@ -42,28 +50,19 @@ public class ToolRegistration {
     @Bean
     public ToolCallback[] allTools() {
         FileOperationTool fileOperationTool = new FileOperationTool();
-        WebSearchTool webSearchTool = new WebSearchTool(searchApiKey);
-        WebScrapingTool webScrapingTool = new WebScrapingTool();
-        ResourceDownloadTool resourceDownloadTool = new ResourceDownloadTool();
         TerminalOperationTool terminalOperationTool = new TerminalOperationTool();
-        PDFGenerationTool pdfGenerationTool = new PDFGenerationTool();
         TerminateTool terminateTool = new TerminateTool();
-        // 复用 Bean 实例
         KnowledgeBaseQueryTool knowledgeBaseQueryTool = knowledgeBaseQueryTool();
 
-        // 1. 获取本地自定义工具
+        // 1. 获取本地自定义工具（仅保留未迁移的工具）
         ToolCallback[] localTools = ToolCallbacks.from(
                 fileOperationTool,
-                webSearchTool,
-                webScrapingTool,
-                resourceDownloadTool,
                 terminalOperationTool,
-                pdfGenerationTool,
                 terminateTool,
                 knowledgeBaseQueryTool
         );
 
-        // 2. 获取 MCP 工具（如果有）
+        // 2. 获取 MCP 工具（WebSearch、WebScraping、PDF、Download 等已通过 MCP Server 提供）
         List<ToolCallback> allToolList = new ArrayList<>(Arrays.asList(localTools));
         if (toolCallbackProvider != null) {
             FunctionCallback[] mcpTools = toolCallbackProvider.getToolCallbacks();

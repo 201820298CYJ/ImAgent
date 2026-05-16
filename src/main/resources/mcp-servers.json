@@ -1,5 +1,16 @@
 {
   "mcpServers": {
+    "yu-agent-tools": {
+      "command": "java",
+      "args": [
+        "-jar",
+        "-Dfile.encoding=UTF-8",
+        "yu-agent-tools-mcp-server/target/yu-agent-tools-mcp-server-0.0.1-SNAPSHOT.jar"
+      ],
+      "env": {
+        "SEARCH_API_KEY": "zEffiRgLvvhtXnvxUGSYD3TN"
+      }
+    },
     "amap-maps": {
       "command": "npx",
       "args": [

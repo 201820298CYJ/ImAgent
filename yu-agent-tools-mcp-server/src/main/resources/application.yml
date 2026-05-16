@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: yu-agent-tools-mcp-server
+  ai:
+    mcp:
+      server:
+        name: yu-agent-tools-mcp-server
+        version: 1.0.0
+        type: SYNC
+        stdio: true
+  main:
+    web-application-type: none
+    banner-mode: off
+
+# WebSearchTool API Key（通过环境变量 SEARCH_API_KEY 注入）
+search-api:
+  api-key: ${SEARCH_API_KEY:zEffiRgLvvhtXnvxUGSYD3TN}
