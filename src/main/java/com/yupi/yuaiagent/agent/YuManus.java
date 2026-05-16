@@ -2,11 +2,11 @@ package com.yupi.yuaiagent.agent;
 
 import com.yupi.yuaiagent.advisor.AdaptiveMemoryCompressorAdvisor;
 import com.yupi.yuaiagent.advisor.MyLoggerAdvisor;
+import com.yupi.yuaiagent.chatmemory.RedisChatMemory;
 import com.yupi.yuaiagent.rag.QueryRewriter;
 import com.yupi.yuaiagent.tools.KnowledgeBaseQueryTool;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
-import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 
@@ -18,20 +18,20 @@ import org.springframework.ai.tool.ToolCallback;
  * Advisor 链路：
  * <ul>
  *     <li>{@link MessageChatMemoryAdvisor}：自动读写 Redis 会话记忆，请求前注入历史、响应后回写</li>
- *     <li>{@link AdaptiveMemoryCompressorAdvisor}：滑动窗口 + 摘要压缩，控制 LLM 入参 token</li>
+ *     <li>{@link AdaptiveMemoryCompressorAdvisor}：滑动窗口 + 摘要压缩 + 存储级回写，控制 LLM 入参 token</li>
  *     <li>{@link MyLoggerAdvisor}：调用链日志</li>
  * </ul>
  * 根据意图分类结果动态路由到不同策略：闲聊/知识库问答/复杂任务/礼貌拒绝。
  */
 public class YuManus extends ToolCallAgent {
 
-    public YuManus(ToolCallback[] allTools, ChatModel dashscopeChatModel, ChatMemory chatMemory,
+    public YuManus(ToolCallback[] allTools, ChatModel dashscopeChatModel,
+                   RedisChatMemory redisChatMemory,
                    QueryRewriter queryRewriter, IntentClassifier intentClassifier,
-                   AdaptiveMemoryCompressorAdvisor memoryCompressorAdvisor,
                    KnowledgeBaseQueryTool knowledgeBaseQueryTool,
                    String conversationId) {
         super(allTools);
-        this.setChatMemory(chatMemory);
+        this.setChatMemory(redisChatMemory);
         this.setQueryRewriter(queryRewriter);
         this.setIntentClassifier(intentClassifier);
         this.setKnowledgeBaseQueryTool(knowledgeBaseQueryTool);
@@ -60,11 +60,15 @@ public class YuManus extends ToolCallAgent {
         this.setNextStepPrompt(NEXT_STEP_PROMPT);
         this.setMaxSteps(10);
 
+        // 每个会话独立创建压缩 Advisor（持有 conversationId，用于存储级回写）
+        AdaptiveMemoryCompressorAdvisor memoryCompressorAdvisor =
+                new AdaptiveMemoryCompressorAdvisor(dashscopeChatModel, redisChatMemory, conversationId);
+
         // 初始化 AI 对话客户端，注册 Advisor 链：会话记忆 + 记忆压缩 + 日志
         // 顺序说明：MessageChatMemoryAdvisor 先注入历史，再由压缩 Advisor 控制窗口大小
         ChatClient chatClient = ChatClient.builder(dashscopeChatModel)
                 .defaultAdvisors(
-                        MessageChatMemoryAdvisor.builder(chatMemory)
+                        MessageChatMemoryAdvisor.builder(redisChatMemory)
                                 .conversationId(conversationId)
                                 .build(),
                         memoryCompressorAdvisor,

@@ -1,12 +1,11 @@
 package com.yupi.yuaiagent.controller;
 
-import com.yupi.yuaiagent.advisor.AdaptiveMemoryCompressorAdvisor;
 import com.yupi.yuaiagent.agent.IntentClassifier;
 import com.yupi.yuaiagent.agent.YuManus;
+import com.yupi.yuaiagent.chatmemory.RedisChatMemory;
 import com.yupi.yuaiagent.rag.QueryRewriter;
 import com.yupi.yuaiagent.tools.KnowledgeBaseQueryTool;
 import jakarta.annotation.Resource;
-import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,7 +23,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  *     <li>REJECT：礼貌拒绝并引导至官方渠道</li>
  * </ul>
  * 会话记忆通过 Redis 持久化，由 MessageChatMemoryAdvisor 自动注入 ChatClient 调用链。
- * 记忆压缩通过 {@link AdaptiveMemoryCompressorAdvisor} 拦截 LLM 入参，二者独立、互不干扰。
+ * 记忆压缩通过 AdaptiveMemoryCompressorAdvisor 拦截 LLM 入参，
+ * 压缩后自动回写 Redis 实现存储级压缩，二者协同工作。
  */
 @RestController
 @RequestMapping("/ai")
@@ -43,24 +43,21 @@ public class AiController {
     private IntentClassifier intentClassifier;
 
     @Resource
-    private AdaptiveMemoryCompressorAdvisor memoryCompressorAdvisor;
-
-    @Resource
     private KnowledgeBaseQueryTool knowledgeBaseQueryTool;
 
     /**
-     * 基于 Redis 的会话记忆（分布式共享 + TTL 自动过期）
+     * 基于 Redis 的会话记忆（分布式共享 + TTL 自动过期 + 存储级压缩替换）
      */
     @Resource
-    private ChatMemory chatMemory;
+    private RedisChatMemory redisChatMemory;
 
     /**
      * 流式调用 Manus 超级智能体（唯一对外 AI 入口）
      */
     @GetMapping("/manus/chat")
     public SseEmitter doChatWithManus(String message, String chatId) {
-        YuManus yuManus = new YuManus(allTools, dashscopeChatModel, chatMemory, queryRewriter,
-                intentClassifier, memoryCompressorAdvisor, knowledgeBaseQueryTool, chatId);
+        YuManus yuManus = new YuManus(allTools, dashscopeChatModel, redisChatMemory,
+                queryRewriter, intentClassifier, knowledgeBaseQueryTool, chatId);
         yuManus.setConversationId(chatId);
         return yuManus.runStream(message);
     }
