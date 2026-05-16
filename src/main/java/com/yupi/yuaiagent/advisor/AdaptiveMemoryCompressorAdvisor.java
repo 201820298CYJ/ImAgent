@@ -4,12 +4,7 @@ import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
 import com.yupi.yuaiagent.chatmemory.RedisChatMemory;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
-import org.springframework.ai.chat.client.advisor.api.AdvisedResponse;
-import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisor;
-import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisorChain;
-import org.springframework.ai.chat.client.advisor.api.StreamAroundAdvisor;
-import org.springframework.ai.chat.client.advisor.api.StreamAroundAdvisorChain;
+import org.springframework.ai.chat.client.advisor.api.*;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -45,7 +40,6 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
 
     /**
      * 会话记忆 Token 预算上限。
-     * <p>
      * 推算依据（qwen-plus，100 万上下文窗口，压缩目的是控制成本与噪声）：
      * <ul>
      *     <li>纯对话轮次：~400 token/轮</li>
@@ -58,6 +52,15 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
 
     /** Token 估算系数：中文 1 字符 ≈ 1.5 token（覆盖中英文混合场景的粗略估算） */
     private static final double TOKEN_PER_CHAR = 1.5;
+
+    /**
+     * 压缩缓冲比例：触发压缩时，额外多压缩 30% 预算量的 token，
+     * 避免压缩后刚好在阈值边缘、下一轮立刻再次触发压缩。
+     * <p>
+     * 例：预算 8000，缓冲 = 8000 × 0.3 = 2400，压缩目标 = excess + 2400，
+     * 压缩后剩余约 8000 - 2400 = 5600 token，可以承受约 3 轮新增对话才再次触发。
+     */
+    private static final double COMPRESS_BUFFER_RATIO = 0.3;
 
     /** 单条消息文本截断长度（避免摘要请求过长） */
     private static final int SINGLE_MESSAGE_TRUNCATE = 500;
@@ -130,12 +133,14 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
             return request;
         }
 
-        // 计算超出量和动态切割点
+        // 计算超出量 + 缓冲量，一次性压缩到阈值的 70% 左右，避免频繁触发
         int excess = totalTokens - MAX_MEMORY_TOKENS;
-        int cutIndex = findCutIndex(messages, excess);
+        int buffer = (int) (MAX_MEMORY_TOKENS * COMPRESS_BUFFER_RATIO);
+        int cutTarget = excess + buffer;
+        int cutIndex = findCutIndex(messages, cutTarget);
 
-        log.info("[记忆压缩] 触发 Token 感知压缩，总 token≈{}，预算={}，超出≈{}，压缩前 {} 条",
-                totalTokens, MAX_MEMORY_TOKENS, excess, cutIndex);
+        log.info("[记忆压缩] 触发 Token 感知压缩，总 token≈{}，预算={}，超出≈{}，缓冲={}，压缩前 {} 条",
+                totalTokens, MAX_MEMORY_TOKENS, excess, buffer, cutIndex);
 
         List<Message> earlyMessages = messages.subList(0, cutIndex);
         List<Message> remainMessages = messages.subList(cutIndex, messages.size());
@@ -260,7 +265,7 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
                 2. 助手做了哪些操作（调用了什么工具、得到了什么结果）
                 3. 当前任务的进展状态
                 
-                要求：摘要控制在 200 字以内，使用中文，只输出摘要内容。
+                要求：使用中文，只输出摘要内容。
                 
                 === 对话历史 ===
                 %s
