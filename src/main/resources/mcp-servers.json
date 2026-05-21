@@ -20,19 +20,6 @@
       "env": {
         "AMAP_MAPS_API_KEY": "ab9de83b6f61303cd2a6a743c6af2c25"
       }
-    },
-    "fetch": {
-      "command": "/Users/Lethee./.local/bin/uvx",
-      "args": [
-        "mcp-server-fetch"
-      ]
-    },
-    "mcp-server-chart": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@antv/mcp-server-chart"
-      ]
     }
   }
 }
