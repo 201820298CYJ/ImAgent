@@ -20,13 +20,13 @@ spring:
           servers-configuration: classpath:mcp-servers.json
   # Elasticsearch 配置
   elasticsearch:
-    uris: http://localhost:9200
+    uris: ${ES_URI:http://localhost:9200}
     # username: elastic
     # password: your-password
 
   # PostgreSQL 数据源配置（pgvector）
   datasource:
-    url: jdbc:postgresql://localhost:5432/yu_ai_agent
+    url: jdbc:postgresql://${PG_HOST:localhost}:5432/yu_ai_agent
     username: postgres
     password: postgres
     driver-class-name: org.postgresql.Driver
@@ -34,7 +34,7 @@ spring:
   # Redis 配置（会话记忆 ChatMemory）
   data:
     redis:
-      host: localhost
+      host: ${REDIS_HOST:localhost}
       port: 6379
       # password: your-password
       database: 0

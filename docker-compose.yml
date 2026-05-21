@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # ==================== 基础设施 ====================
+
+  # PostgreSQL + pgvector（向量数据库）
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: yu-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: yu_ai_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Elasticsearch + IK 分词器
+  elasticsearch:
+    build:
+      context: ./docker/elasticsearch
+      dockerfile: Dockerfile
+    container_name: yu-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # Redis（会话记忆）
+  redis:
+    image: redis:7-alpine
+    container_name: yu-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== 应用服务 ====================
+
+  # 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yu-ai-agent-backend
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - ES_URI=http://elasticsearch:9200
+      - PG_HOST=postgres
+      - REDIS_HOST=redis
+
+  # 前端服务
+  frontend:
+    build:
+      context: ./yu-ai-agent-frontend
+      dockerfile: Dockerfile
+    container_name: yu-ai-agent-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    volumes:
+      - ./docker/nginx/nginx-prod.conf:/etc/nginx/conf.d/default.conf
+
+# ==================== 数据持久化 ====================
+volumes:
+  postgres_data:
+    driver: local
+  es_data:
+    driver: local
+  redis_data:
+    driver: local
