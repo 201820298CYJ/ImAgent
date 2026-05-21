@@ -19,10 +19,10 @@ import java.util.stream.Collectors;
  */
 public class KnowledgeBaseQueryTool {
 
-    private static final int VECTOR_TOP_K = 10;
-    private static final int BM25_TOP_K = 10;
-    private static final double SIMILARITY_THRESHOLD = 0.5;
-    private static final int FUSION_TOP_N = 20;
+    private static final int VECTOR_TOP_K = 15;
+    private static final int BM25_TOP_K = 15;
+    private static final double SIMILARITY_THRESHOLD = 0.6;
+    private static final int FUSION_TOP_N = 15;
     private static final int RERANK_TOP_K = 5;
 
     private final HybridSearchService hybridSearchService;
