@@ -12,9 +12,6 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Token 感知的自适应记忆压缩 Advisor
@@ -67,9 +64,6 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
 
     /** 用于生成摘要的轻量模型 */
     private static final String COMPRESS_MODEL = "qwen-turbo";
-
-    /** 异步摘要生成的超时时间（秒） */
-    private static final int SUMMARY_TIMEOUT_SECONDS = 10;
 
     /** 独立 ChatClient，避免摘要调用再次进入本 Advisor 形成递归 */
     private final ChatClient summaryChatClient;
@@ -145,8 +139,8 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
         List<Message> earlyMessages = messages.subList(0, cutIndex);
         List<Message> remainMessages = messages.subList(cutIndex, messages.size());
 
-        // 异步生成摘要，带超时控制
-        String summary = summarizeAsync(earlyMessages);
+        // 同步生成摘要，失败时降级为简单截断
+        String summary = summarize(earlyMessages);
 
         List<Message> compressed = new ArrayList<>(remainMessages.size() + 1);
         compressed.add(new SystemMessage("以下是之前对话的摘要（用于保持上下文连贯性）：\n" + summary));
@@ -221,29 +215,9 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
     // ===================================================================
 
     /**
-     * 异步生成摘要，带超时控制。
-     * 超时或异常时降级为简单截断兜底，确保不阻塞主调用链过长时间。
+     * 同步生成摘要，失败时降级为简单截断兜底。
      */
-    private String summarizeAsync(List<Message> messages) {
-        CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> doSummarize(messages));
-        try {
-            String result = future.get(SUMMARY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            if (result != null && !result.isBlank()) {
-                return result;
-            }
-        } catch (TimeoutException e) {
-            log.warn("[记忆压缩] 摘要生成超时（{}s），使用简单截断兜底", SUMMARY_TIMEOUT_SECONDS);
-            future.cancel(true);
-        } catch (Exception e) {
-            log.warn("[记忆压缩] 异步摘要生成异常，使用简单截断兜底: {}", e.getMessage());
-        }
-        return buildFallbackSummary(messages);
-    }
-
-    /**
-     * 使用轻量模型对早期消息生成摘要。
-     */
-    private String doSummarize(List<Message> messages) {
+    private String summarize(List<Message> messages) {
         StringBuilder history = new StringBuilder();
         for (Message msg : messages) {
             String role = switch (msg.getMessageType()) {
@@ -288,9 +262,9 @@ public class AdaptiveMemoryCompressorAdvisor implements CallAroundAdvisor, Strea
                 return result.trim();
             }
         } catch (Exception e) {
-            log.warn("[记忆压缩] 摘要生成失败: {}", e.getMessage());
+            log.warn("[记忆压缩] 摘要生成失败，使用简单截断兜底: {}", e.getMessage());
         }
-        return null;
+        return buildFallbackSummary(messages);
     }
 
     /**
