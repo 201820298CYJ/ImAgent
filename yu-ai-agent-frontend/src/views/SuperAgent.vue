@@ -1,22 +1,20 @@
 <template>
   <div class="super-agent-container">
     <div class="header">
-      <div class="back-button" @click="goBack">返回</div>
-      <h1 class="title">AI超级智能体</h1>
-      <div class="placeholder"></div>
+      <h1 class="title">南京大学信息管理学院 AI 智能体</h1>
     </div>
-    
+
     <div class="content-wrapper">
       <div class="chat-area">
-        <ChatRoom 
-          :messages="messages" 
+        <ChatRoom
+          :messages="messages"
           :connection-status="connectionStatus"
           ai-type="super"
           @send-message="sendMessage"
         />
       </div>
     </div>
-    
+
     <div class="footer-container">
       <AppFooter />
     </div>
@@ -25,7 +23,6 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
 import { useHead } from '@vueuse/head'
 import ChatRoom from '../components/ChatRoom.vue'
 import AppFooter from '../components/AppFooter.vue'
@@ -37,11 +34,11 @@ useHead({
   meta: [
     {
       name: 'description',
-      content: 'AI超级智能体是南大信管AI超级智能体应用平台的全能助手，能解答各类专业问题，提供精准建议和解决方案'
+      content: '南大信管 AI 智能体，能解答各类专业问题，提供精准建议和解决方案'
     },
     {
       name: 'keywords',
-      content: 'AI超级智能体,智能助手,专业问答,AI问答,专业建议,AI智能体'
+      content: 'AI智能体,智能助手,专业问答,AI问答,专业建议,信管'
     }
   ]
 })
@@ -51,9 +48,8 @@ const generateChatId = () => {
   return 'manus_' + Math.random().toString(36).substring(2, 10)
 }
 
-const router = useRouter()
 const messages = ref([])
-const chatId = ref('')
+const chatId = ref(generateChatId())
 const connectionStatus = ref('disconnected')
 let eventSource = null
 
@@ -70,107 +66,53 @@ const addMessage = (content, isUser, type = '') => {
 // 发送消息
 const sendMessage = (message) => {
   addMessage(message, true, 'user-question')
-  
-  // 连接SSE
+
+  // 关闭上一个连接
   if (eventSource) {
     eventSource.close()
   }
-  
-  // 设置连接状态
+
   connectionStatus.value = 'connecting'
-  
-  // 临时存储
-  let messageBuffer = []; // 用于存储SSE消息的缓冲区
-  let lastBubbleTime = Date.now(); // 上一个气泡的创建时间
-  let isFirstResponse = true; // 是否是第一次响应
-  
-  const chineseEndPunctuation = ['。', '！', '？', '…']; // 中文句子结束标点
-  const minBubbleInterval = 800; // 气泡最小间隔时间(毫秒)
-  
-  // 创建消息气泡的函数
-  const createBubble = (content, type = 'ai-answer') => {
-    if (!content.trim()) return;
-    
-    // 添加适当的延迟，使消息显示更自然
-    const now = Date.now();
-    const timeSinceLastBubble = now - lastBubbleTime;
-    
-    if (isFirstResponse) {
-      // 第一条消息立即显示
-      addMessage(content, false, type);
-      isFirstResponse = false;
-    } else if (timeSinceLastBubble < minBubbleInterval) {
-      // 如果与上一气泡间隔太短，添加一个延迟
-      setTimeout(() => {
-        addMessage(content, false, type);
-      }, minBubbleInterval - timeSinceLastBubble);
-    } else {
-      // 正常添加消息
-      addMessage(content, false, type);
-    }
-    
-    lastBubbleTime = now;
-    messageBuffer = []; // 清空缓冲区
-  };
-  
+
+  // 为本轮回答创建一条初始为空的 AI 消息，后续 chunk 直接追加到它的 content
+  const aiIndex = messages.value.length
+  addMessage('', false, 'ai-answer')
+
   eventSource = chatWithManus(message, chatId.value)
-  
-  // 监听SSE消息
+
   eventSource.onmessage = (event) => {
     const data = event.data
-    
-    if (data && data !== '[DONE]') {
-      messageBuffer.push(data);
-      
-      // 检查是否应该创建新气泡
-      const combinedText = messageBuffer.join('');
-      
-      // 句子结束或消息长度达到阈值
-      const lastChar = data.charAt(data.length - 1);
-      const hasCompleteSentence = chineseEndPunctuation.includes(lastChar) || data.includes('\n\n');
-      const isLongEnough = combinedText.length > 40;
-      
-      if (hasCompleteSentence || isLongEnough) {
-        createBubble(combinedText);
-      }
-    }
-    
+
     if (data === '[DONE]') {
-      // 如果还有未显示的内容，创建最后一个气泡
-      if (messageBuffer.length > 0) {
-        const remainingContent = messageBuffer.join('');
-        createBubble(remainingContent, 'ai-final');
-      }
-      
-      // 完成后关闭连接
       connectionStatus.value = 'disconnected'
       eventSource.close()
+      return
+    }
+
+    if (data === undefined || data === null) return
+
+    // 直接把增量追加到当前 AI 消息
+    const target = messages.value[aiIndex]
+    if (target) {
+      target.content += data
     }
   }
-  
-  // 监听SSE错误
+
   eventSource.onerror = (error) => {
     console.error('SSE Error:', error)
-    connectionStatus.value = 'error'
-    eventSource.close()
-    
-    // 如果出错时有未显示的内容，也创建气泡
-    if (messageBuffer.length > 0) {
-      const remainingContent = messageBuffer.join('');
-      createBubble(remainingContent, 'ai-error');
+    // 服务端 complete() 后浏览器 EventSource 会自动触发 error，用当前累计内容判断是否真出错
+    const target = messages.value[aiIndex]
+    if (!target || !target.content) {
+      addMessage('抱歉，连接出现异常，请稍后重试。', false, 'ai-error')
     }
+    connectionStatus.value = 'disconnected'
+    eventSource.close()
   }
-}
-
-// 返回主页
-const goBack = () => {
-  router.push('/')
 }
 
 // 页面加载时添加欢迎消息
 onMounted(() => {
-  // 添加欢迎消息
-  addMessage('你好，我是AI超级智能体。我可以解答各类问题，提供专业建议，请问有什么可以帮助你的吗？', false)
+  addMessage('你好，我是南京大学信息管理学院 AI 智能体。可以回答学院资讯、学术问题，也能帮你完成搜索、查询知识库等任务，请问有什么可以帮你的？', false)
 })
 
 // 组件销毁前关闭SSE连接
@@ -190,9 +132,9 @@ onBeforeUnmount(() => {
 }
 
 .header {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: center;
   padding: 16px 24px;
   background-color: #3f51b5;
   color: white;
@@ -202,35 +144,11 @@ onBeforeUnmount(() => {
   z-index: 10;
 }
 
-.back-button {
-  font-size: 16px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  transition: opacity 0.2s;
-  justify-self: start;
-}
-
-.back-button:hover {
-  opacity: 0.8;
-}
-
-.back-button:before {
-  content: '←';
-  margin-right: 8px;
-}
-
 .title {
   font-size: 20px;
   font-weight: bold;
   margin: 0;
   text-align: center;
-  justify-self: center;
-}
-
-.placeholder {
-  width: 1px;
-  justify-self: end;
 }
 
 .content-wrapper {
@@ -258,11 +176,11 @@ onBeforeUnmount(() => {
   .header {
     padding: 12px 16px;
   }
-  
+
   .title {
     font-size: 18px;
   }
-  
+
   .chat-area {
     padding: 12px;
     min-height: calc(100vh - 48px - 160px); /* 调整计算值 */
@@ -274,19 +192,15 @@ onBeforeUnmount(() => {
   .header {
     padding: 10px 12px;
   }
-  
-  .back-button {
-    font-size: 14px;
-  }
-  
+
   .title {
     font-size: 16px;
   }
-  
+
   .chat-area {
     padding: 8px;
     min-height: calc(100vh - 42px - 150px); /* 再次调整计算值 */
     margin-bottom: 8px;
   }
 }
-</style> 
+</style>
