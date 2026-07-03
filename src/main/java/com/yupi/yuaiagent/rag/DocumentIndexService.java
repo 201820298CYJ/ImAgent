@@ -54,8 +54,15 @@ public class DocumentIndexService {
         log.info("关键词增强完成，共 {} 个文档片段", enrichedDocuments.size());
 
         // 4. 双写入库
-        // 4.1 写入 pgvector（向量检索）
-        pgVectorVectorStore.add(enrichedDocuments);
+        // 4.1 写入 pgvector（向量检索）—— DashScope Embedding 单次最多 25 条，需要分批
+        int embeddingBatchSize = 25;
+        for (int i = 0; i < enrichedDocuments.size(); i += embeddingBatchSize) {
+            List<Document> batch = enrichedDocuments.subList(
+                    i, Math.min(i + embeddingBatchSize, enrichedDocuments.size()));
+            pgVectorVectorStore.add(batch);
+            log.info("pgvector 写入进度：{}/{}",
+                    Math.min(i + embeddingBatchSize, enrichedDocuments.size()), enrichedDocuments.size());
+        }
         log.info("成功写入 pgvector 向量数据库");
 
         // 4.2 写入 Elasticsearch（BM25 关键词检索）
