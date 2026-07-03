@@ -54,6 +54,11 @@ chat:
       ttl-hours: 24
       max-messages: 100
 
+# Agent 配置
+agent:
+  classify:
+    confidence-threshold: 0.6
+
   # DashScope Rerank 配置
 dashscope:
   rerank:

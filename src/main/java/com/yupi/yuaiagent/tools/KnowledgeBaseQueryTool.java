@@ -1,5 +1,8 @@
 package com.yupi.yuaiagent.tools;
 
+import com.yupi.yuaiagent.harness.TraceContext;
+import com.yupi.yuaiagent.harness.TraceCollector;
+import com.yupi.yuaiagent.harness.model.AgentRunTrace;
 import com.yupi.yuaiagent.rag.DashScopeRerankService;
 import com.yupi.yuaiagent.rag.HybridSearchService;
 import org.springframework.ai.document.Document;
@@ -48,12 +51,41 @@ public class KnowledgeBaseQueryTool {
         List<Document> fusedDocuments = hybridSearchService.hybridSearch(
                 query, VECTOR_TOP_K, BM25_TOP_K, SIMILARITY_THRESHOLD, FUSION_TOP_N);
 
+        // 上报检索结果到追踪收集器
+        TraceCollector tc = TraceContext.get();
+        if (tc != null) {
+            for (Document doc : fusedDocuments) {
+                double rrfScore = doc.getMetadata().containsKey("rrf_score")
+                        ? ((Number) doc.getMetadata().get("rrf_score")).doubleValue() : 0.0;
+                tc.addRetrievalEntry(new AgentRunTrace.RetrievalEntry(
+                        doc.getId(),
+                        doc.getText().substring(0, Math.min(200, doc.getText().length())),
+                        rrfScore,
+                        "rrf"
+                ));
+            }
+        }
+
         if (fusedDocuments.isEmpty()) {
             return "知识库中未找到与该问题相关的内容，建议使用网络搜索工具获取更多信息。";
         }
 
         // 2. Rerank 精排：交叉编码器二次精排
         List<Document> rerankedDocuments = dashScopeRerankService.rerank(query, fusedDocuments, RERANK_TOP_K);
+
+        // 上报 rerank 结果到追踪收集器
+        if (tc != null) {
+            for (Document doc : rerankedDocuments) {
+                double rerankScore = doc.getMetadata().containsKey("rerank_score")
+                        ? ((Number) doc.getMetadata().get("rerank_score")).doubleValue() : 0.0;
+                tc.addRerankEntry(new AgentRunTrace.RetrievalEntry(
+                        doc.getId(),
+                        doc.getText().substring(0, Math.min(200, doc.getText().length())),
+                        rerankScore,
+                        "rerank"
+                ));
+            }
+        }
 
         if (rerankedDocuments.isEmpty()) {
             return "知识库中未找到与该问题相关的内容，建议使用网络搜索工具获取更多信息。";

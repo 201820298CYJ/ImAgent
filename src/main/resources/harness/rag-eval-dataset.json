@@ -1,0 +1,62 @@
+[
+  {
+    "id": "Q01",
+    "question": "南京大学信息管理学院的官方网站是什么？",
+    "expectedKeywords": ["im.nju.edu.cn"],
+    "expectedDocSection": "官方网站"
+  },
+  {
+    "id": "Q02",
+    "question": "信息管理学院是哪一年加入国际iSchools组织的？",
+    "expectedKeywords": ["2011"],
+    "expectedDocSection": "学院概况"
+  },
+  {
+    "id": "Q03",
+    "question": "学院目前有多少教职工？",
+    "expectedKeywords": ["80余人"],
+    "expectedDocSection": "学院概况"
+  },
+  {
+    "id": "Q04",
+    "question": "2022年谁担任了学院院长？",
+    "expectedKeywords": ["裴雷"],
+    "expectedDocSection": "学院发展历程"
+  },
+  {
+    "id": "Q05",
+    "question": "信息管理与信息系统专业的培养目标是什么？",
+    "expectedKeywords": ["信息系统分析与设计"],
+    "expectedDocSection": "信息管理与信息系统专业"
+  },
+  {
+    "id": "Q06",
+    "question": "图书馆学专业是什么时候恢复本科教育的？",
+    "expectedKeywords": ["1985"],
+    "expectedDocSection": "图书馆学专业"
+  },
+  {
+    "id": "Q07",
+    "question": "学院有哪些本科专业？",
+    "expectedKeywords": ["信息管理与信息系统", "图书馆学", "档案学", "编辑出版学"],
+    "expectedDocSection": "学院概况"
+  },
+  {
+    "id": "Q08",
+    "question": "情报学是什么时候获得博士学位授予权的？",
+    "expectedKeywords": ["1996"],
+    "expectedDocSection": "学院发展历程"
+  },
+  {
+    "id": "Q09",
+    "question": "学院与哪些海外高校建立了合作关系？",
+    "expectedKeywords": ["剑桥大学", "匹兹堡大学"],
+    "expectedDocSection": "国际化发展"
+  },
+  {
+    "id": "Q10",
+    "question": "国家安全数据管理的学科代码是多少？",
+    "expectedKeywords": ["1205Z3"],
+    "expectedDocSection": "研究生的研究方向"
+  }
+]
