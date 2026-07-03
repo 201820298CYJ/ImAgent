@@ -89,6 +89,9 @@ public abstract class BaseAgent {
     /** 意图分类置信度阈值：低于此值触发澄清流程 */
     private double classifyConfidenceThreshold = 0.6;
 
+    /** 当前请求的输出通道，供子类（如 ToolCallAgent）在 think/act 内部推送流式内容 */
+    private OutputSink currentSink;
+
     // 拒绝话术常量
     private static final String REJECT_REPLY =
             "非常抱歉，该问题超出了我的服务范围。建议您通过南京大学信息管理学院官方渠道获取更多帮助。";
@@ -152,6 +155,7 @@ public abstract class BaseAgent {
         }
 
         this.state = AgentState.RUNNING;
+        this.currentSink = sink;
         // 设置 ThreadLocal 追踪上下文（SSE 模式下此方法在 CompletableFuture.runAsync 线程中执行）
         if (traceCollector != null) {
             TraceContext.set(traceCollector);
@@ -175,6 +179,7 @@ public abstract class BaseAgent {
             sink.completeWithError("执行错误：" + e.getMessage());
         } finally {
             TraceContext.clear();
+            this.currentSink = null;
             this.cleanup();
         }
     }
@@ -270,27 +275,25 @@ public abstract class BaseAgent {
 
     /**
      * CHAT 意图：闲聊场景一次性直答，不进入 ReAct，不调用工具。
+     * 使用流式接口，逐 token 推送到前端。
      */
     private void handleChatIntent(String processedPrompt, OutputSink sink) {
-        log.info("[{}] CHAT 路由：一次性直答", name);
+        log.info("[{}] CHAT 路由：一次性直答（流式）", name);
         String chatSystemPrompt = systemPrompt
                 + "\n当前为闲聊模式，请用专业、亲切的语言友好回复，无需调用任何工具。";
-        String answer = chatClient.prompt()
+        String answer = streamAndCollect(chatClient.prompt()
                 .system(chatSystemPrompt)
-                .user(processedPrompt)
-                .call()
-                .content();
+                .user(processedPrompt), sink);
         if (traceCollector != null) {
             traceCollector.setFinalAnswer(answer);
         }
         state = AgentState.FINISHED;
-        sink.send(answer);
         // 精华写入 Redis：只存用户问题 + 最终回答
         persistEssentialMemory(processedPrompt, answer);
     }
 
     /**
-     * KNOWLEDGE 意图：跳过 ReAct，直接走 RAG（Hybrid Search + Rerank）+ LLM 生成。
+     * KNOWLEDGE 意图：跳过 ReAct，直接走 RAG（Hybrid Search + Rerank）+ LLM 流式生成。
      * 工具未注入或调用异常时，自动降级到 TASK 完整 ReAct 循环。
      */
     private void handleKnowledgeIntent(String processedPrompt, OutputSink sink) {
@@ -307,26 +310,23 @@ public abstract class BaseAgent {
             // 2. 构造带知识库上下文的 Prompt
             String knowledgePrompt = String.format("""
                     请基于以下知识库检索结果回答用户问题。如果检索结果中没有相关信息，请如实告知用户。
-                    
+
                     【知识库检索结果】
                     %s
-                    
+
                     【用户问题】
                     %s
                     """, ragContext, processedPrompt);
 
-            // 3. LLM 直答
-            String answer = chatClient.prompt()
+            // 3. LLM 流式直答
+            String answer = streamAndCollect(chatClient.prompt()
                     .system(systemPrompt)
-                    .user(knowledgePrompt)
-                    .call()
-                    .content();
+                    .user(knowledgePrompt), sink);
             log.info("[{}] KNOWLEDGE 直接回答完成", name);
             if (traceCollector != null) {
                 traceCollector.setFinalAnswer(answer);
             }
             state = AgentState.FINISHED;
-            sink.send(answer);
             // 精华写入 Redis：只存用户问题 + 最终回答
             persistEssentialMemory(processedPrompt, answer);
         } catch (Exception e) {
@@ -336,32 +336,50 @@ public abstract class BaseAgent {
     }
 
     /**
+     * 阻塞式订阅 ChatClient 的 stream 输出：每收到一个非空 chunk 立即推给 sink，
+     * 同时聚合成完整回答返回给调用方（用于写入 Trace / 记忆）。
+     */
+    private String streamAndCollect(ChatClient.ChatClientRequestSpec spec, OutputSink sink) {
+        StringBuilder buffer = new StringBuilder();
+        spec.stream()
+                .content()
+                .toStream()
+                .forEach(chunk -> {
+                    if (chunk == null || chunk.isEmpty()) {
+                        return;
+                    }
+                    buffer.append(chunk);
+                    sink.send(chunk);
+                });
+        return buffer.toString();
+    }
+
+    /**
      * TASK 意图：完整 ReAct 循环，全工具可用。
+     * think() 阶段的 LLM 文本由 ToolCallAgent 内部逐 chunk 推送；
+     * 这里只在每步边界推送一条简短的步骤标记，方便前端渲染分段。
      */
     private void handleTaskIntent(String processedPrompt, OutputSink sink) {
         log.info("[{}] TASK 路由：进入 ReAct 循环（maxSteps={}）", name, maxSteps);
         // 用户问题入消息上下文（驱动 ReAct）
         messageList.add(new UserMessage(processedPrompt));
 
-        StringBuilder taskAnswer = new StringBuilder();
         for (int i = 0; i < maxSteps && state != AgentState.FINISHED; i++) {
             currentStep = i + 1;
             log.info("Executing step {}/{}", currentStep, maxSteps);
-            String stepResult = step();
-            String result = "Step " + currentStep + ": " + stepResult;
-            taskAnswer.append(result).append("\n");
-            sink.send(result);
+            sink.send("\n\n[Step " + currentStep + "] ");
+            step();
         }
         // 达到上限仍未结束，强制收尾
         if (currentStep >= maxSteps && state != AgentState.FINISHED) {
             state = AgentState.FINISHED;
-            sink.send("执行结束：达到最大步骤（" + maxSteps + "）");
-        }
-        if (traceCollector != null) {
-            traceCollector.setFinalAnswer(taskAnswer.toString());
+            sink.send("\n\n执行结束：达到最大步骤（" + maxSteps + "）");
         }
         // 精华写入 Redis：只存用户问题 + 最终回答摘要（从 messageList 中提取最后的 Assistant 文本）
         String finalAnswer = extractFinalAnswer();
+        if (traceCollector != null) {
+            traceCollector.setFinalAnswer(finalAnswer);
+        }
         persistEssentialMemory(processedPrompt, finalAnswer);
     }
 

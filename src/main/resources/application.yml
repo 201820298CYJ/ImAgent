@@ -9,13 +9,8 @@ spring:
       chat:
         options:
           model: qwen-plus
-# 临时注释掉，便于大家开发调试和部署
     mcp:
       client:
-#        sse:
-#          connections:
-#            server1:
-#              url: http://localhost:8127
         stdio:
           servers-configuration: classpath:mcp-servers.json
   # Elasticsearch 配置

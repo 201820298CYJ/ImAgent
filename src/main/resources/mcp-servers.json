@@ -10,16 +10,6 @@
       "env": {
         "SEARCH_API_KEY": "zEffiRgLvvhtXnvxUGSYD3TN"
       }
-    },
-    "amap-maps": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@amap/amap-maps-mcp-server"
-      ],
-      "env": {
-        "AMAP_MAPS_API_KEY": "ab9de83b6f61303cd2a6a743c6af2c25"
-      }
     }
   }
 }

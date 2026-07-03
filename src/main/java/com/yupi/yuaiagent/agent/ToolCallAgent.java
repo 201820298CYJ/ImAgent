@@ -4,6 +4,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
 import com.yupi.yuaiagent.agent.model.AgentState;
+import com.yupi.yuaiagent.agent.sink.OutputSink;
 import com.yupi.yuaiagent.harness.TraceContext;
 import com.yupi.yuaiagent.harness.TraceCollector;
 import com.yupi.yuaiagent.harness.model.AgentRunTrace;
@@ -16,6 +17,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingManager;
@@ -63,7 +65,10 @@ public class ToolCallAgent extends ReActAgent {
     }
 
     /**
-     * 处理当前状态并决定下一步行动
+     * 处理当前状态并决定下一步行动。
+     * <p>
+     * 走流式接口：把每个非空文本 chunk 通过 {@link OutputSink} 立即推给客户端，
+     * 同时收集完整的 {@link ChatResponse} 用于后续 act() 阶段解析工具调用。
      *
      * @return 是否需要执行行动
      */
@@ -74,23 +79,17 @@ public class ToolCallAgent extends ReActAgent {
             UserMessage userMessage = new UserMessage(getNextStepPrompt());
             getMessageList().add(userMessage);
         }
-        // 2、调用 AI 大模型，获取工具调用结果
+        // 2、调用 AI 大模型（流式），获取工具调用结果
         List<Message> messageList = getMessageList();
         Prompt prompt = new Prompt(messageList, this.chatOptions);
+        OutputSink sink = getCurrentSink();
         try {
-            ChatResponse chatResponse = getChatClient().prompt(prompt)
-                    .system(getSystemPrompt())
-                    .tools(availableTools)
-                    .call()
-                    .chatResponse();
+            ChatResponse chatResponse = streamThinkAndCollect(prompt, sink);
             // 记录响应，用于等下 Act
             this.toolCallChatResponse = chatResponse;
             // 3、解析工具调用结果，获取要调用的工具
-            // 助手消息
             AssistantMessage assistantMessage = chatResponse.getResult().getOutput();
-            // 获取要调用的工具列表
             List<AssistantMessage.ToolCall> toolCallList = assistantMessage.getToolCalls();
-            // 输出提示信息
             String result = assistantMessage.getText();
             log.info(getName() + "的思考：" + result);
             log.info(getName() + "选择了 " + toolCallList.size() + " 个工具来使用");
@@ -105,13 +104,77 @@ public class ToolCallAgent extends ReActAgent {
                 return false;
             } else {
                 // 需要调用工具时，无需记录助手消息，因为调用工具时会自动记录
+                if (sink != null && !toolCallList.isEmpty()) {
+                    sink.send("\n> 调用工具：" + toolCallList.stream()
+                            .map(AssistantMessage.ToolCall::name)
+                            .collect(Collectors.joining("、")));
+                }
                 return true;
             }
         } catch (Exception e) {
             log.error(getName() + "的思考过程遇到了问题：" + e.getMessage());
             getMessageList().add(new AssistantMessage("处理时遇到了错误：" + e.getMessage()));
+            if (sink != null) {
+                sink.send("处理时遇到了错误：" + e.getMessage());
+            }
             return false;
         }
+    }
+
+    /**
+     * 阻塞式订阅 stream()，边收 chunk 边推 sink；最后一个 ChatResponse 汇总了所有工具调用与完整文本。
+     * <p>
+     * DashScope 的 stream 每个中间响应仅带增量文本，最后一个响应带完整的 ToolCall 列表，
+     * 因此这里用 last-one-wins 保留最终响应，累积文本用于兜底日志。
+     */
+    private ChatResponse streamThinkAndCollect(Prompt prompt, OutputSink sink) {
+        StringBuilder textBuffer = new StringBuilder();
+        ChatResponse[] lastRef = new ChatResponse[1];
+        getChatClient().prompt(prompt)
+                .system(getSystemPrompt())
+                .tools(availableTools)
+                .stream()
+                .chatResponse()
+                .toStream()
+                .forEach(resp -> {
+                    lastRef[0] = resp;
+                    if (resp == null || resp.getResult() == null) {
+                        return;
+                    }
+                    AssistantMessage delta = resp.getResult().getOutput();
+                    if (delta == null) {
+                        return;
+                    }
+                    String text = delta.getText();
+                    if (text == null || text.isEmpty()) {
+                        return;
+                    }
+                    textBuffer.append(text);
+                    if (sink != null) {
+                        sink.send(text);
+                    }
+                });
+        ChatResponse last = lastRef[0];
+        if (last == null) {
+            throw new IllegalStateException("LLM 未返回任何响应");
+        }
+        // 若最后一条响应的 AssistantMessage 没带完整文本（stream 增量下常见），
+        // 用累积文本重建一个新的 AssistantMessage，保留 toolCalls / metadata。
+        AssistantMessage originOutput = last.getResult().getOutput();
+        String originText = originOutput.getText();
+        if ((originText == null || originText.isEmpty()) && textBuffer.length() > 0) {
+            AssistantMessage merged = new AssistantMessage(
+                    textBuffer.toString(),
+                    originOutput.getMetadata(),
+                    originOutput.getToolCalls(),
+                    originOutput.getMedia()
+            );
+            return ChatResponse.builder()
+                    .from(last)
+                    .generations(List.of(new Generation(merged, last.getResult().getMetadata())))
+                    .build();
+        }
+        return last;
     }
 
     /**
