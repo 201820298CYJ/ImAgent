@@ -18,15 +18,11 @@ import java.util.List;
 /**
  * 集中的工具注册类
  *
- * 已迁移至 MCP Server（yu-agent-tools-mcp-server）的工具：
+ * MCP Server（yu-agent-tools-mcp-server）提供的工具：
  * - WebSearchTool
  * - WebScrapingTool
- * - PDFGenerationTool
- * - ResourceDownloadTool
  *
- * 以下工具保留在本地：
- * - FileOperationTool（依赖本地文件系统）
- * - TerminalOperationTool（依赖宿主机环境）
+ * 本地工具：
  * - TerminateTool（Agent 内部流程控制）
  * - KnowledgeBaseQueryTool（依赖 RAG 基础设施）
  */
@@ -49,20 +45,16 @@ public class ToolRegistration {
 
     @Bean
     public ToolCallback[] allTools() {
-        FileOperationTool fileOperationTool = new FileOperationTool();
-        TerminalOperationTool terminalOperationTool = new TerminalOperationTool();
         TerminateTool terminateTool = new TerminateTool();
         KnowledgeBaseQueryTool knowledgeBaseQueryTool = knowledgeBaseQueryTool();
 
-        // 1. 获取本地自定义工具（仅保留未迁移的工具）
+        // 1. 本地工具
         ToolCallback[] localTools = ToolCallbacks.from(
-                fileOperationTool,
-                terminalOperationTool,
                 terminateTool,
                 knowledgeBaseQueryTool
         );
 
-        // 2. 获取 MCP 工具（WebSearch、WebScraping、PDF、Download 等已通过 MCP Server 提供）
+        // 2. MCP 工具（WebSearch、WebScraping）
         List<ToolCallback> allToolList = new ArrayList<>(Arrays.asList(localTools));
         if (toolCallbackProvider != null) {
             FunctionCallback[] mcpTools = toolCallbackProvider.getToolCallbacks();
@@ -78,5 +70,3 @@ public class ToolRegistration {
         return allToolList.toArray(new ToolCallback[0]);
     }
 }
-
-

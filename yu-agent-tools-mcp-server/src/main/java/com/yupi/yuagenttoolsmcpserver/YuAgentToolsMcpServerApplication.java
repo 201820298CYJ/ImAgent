@@ -1,7 +1,5 @@
 package com.yupi.yuagenttoolsmcpserver;
 
-import com.yupi.yuagenttoolsmcpserver.tools.PDFGenerationTool;
-import com.yupi.yuagenttoolsmcpserver.tools.ResourceDownloadTool;
 import com.yupi.yuagenttoolsmcpserver.tools.WebScrapingTool;
 import com.yupi.yuagenttoolsmcpserver.tools.WebSearchTool;
 import org.springframework.ai.tool.ToolCallbackProvider;
@@ -19,11 +17,9 @@ public class YuAgentToolsMcpServerApplication {
 
     @Bean
     public ToolCallbackProvider agentTools(WebSearchTool webSearchTool,
-                                           WebScrapingTool webScrapingTool,
-                                           PDFGenerationTool pdfGenerationTool,
-                                           ResourceDownloadTool resourceDownloadTool) {
+                                           WebScrapingTool webScrapingTool) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(webSearchTool, webScrapingTool, pdfGenerationTool, resourceDownloadTool)
+                .toolObjects(webSearchTool, webScrapingTool)
                 .build();
     }
 }
