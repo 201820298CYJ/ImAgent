@@ -22,6 +22,7 @@ services:
 
   # Elasticsearch + IK 分词器
   elasticsearch:
+    image: joeychen123/yu-ai-agent-es:latest
     build:
       context: ./docker/elasticsearch
       dockerfile: Dockerfile
@@ -60,6 +61,7 @@ services:
 
   # 后端服务
   backend:
+    image: joeychen123/yu-ai-agent-backend:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -81,6 +83,7 @@ services:
 
   # 前端服务
   frontend:
+    image: joeychen123/yu-ai-agent-frontend:latest
     build:
       context: ./yu-ai-agent-frontend
       dockerfile: Dockerfile
