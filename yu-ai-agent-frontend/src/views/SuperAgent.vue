@@ -12,6 +12,7 @@
           </div>
         </div>
         <div class="status-block">
+          <button class="trace-btn" @click="showTraceModal = true">Trace</button>
           <div class="status-pill" :class="statusClass">
             <span class="status-dot"></span>
             <span class="status-text">{{ statusText }}</span>
@@ -33,6 +34,8 @@
       </div>
     </main>
 
+    <TraceModal :visible="showTraceModal" @close="showTraceModal = false" />
+
     <AppFooter />
   </div>
 </template>
@@ -42,6 +45,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useHead } from '@vueuse/head'
 import ChatRoom from '../components/ChatRoom.vue'
 import AppFooter from '../components/AppFooter.vue'
+import TraceModal from '../components/TraceModal.vue'
 import { chatWithManus } from '../api'
 
 useHead({
@@ -59,6 +63,7 @@ const generateChatId = () => 'imagent_' + Math.random().toString(36).substring(2
 const messages = ref([])
 const chatId = ref(generateChatId())
 const connectionStatus = ref('disconnected')
+const showTraceModal = ref(false)
 let eventSource = null
 
 const quickPrompts = [
@@ -248,6 +253,25 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+}
+
+.trace-btn {
+  padding: 5px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(6px);
+  transition: all 0.2s;
+}
+
+.trace-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
 }
 
 .status-pill {

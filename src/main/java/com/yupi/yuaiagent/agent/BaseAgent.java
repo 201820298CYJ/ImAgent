@@ -135,6 +135,28 @@ public abstract class BaseAgent {
         return sseEmitter;
     }
 
+    /**
+     * 使用外部提供的 SseEmitter 流式运行代理。
+     * 由调用方（如 AgentHarness）负责创建 emitter，
+     * onFinish 在 Agent 执行流程结束后（finally 中）同步调用，确保 Trace 不丢失。
+     */
+    public void runStreamWithEmitter(String userPrompt, SseEmitter sseEmitter, Runnable onFinish) {
+        SseOutputSink sink = new SseOutputSink(sseEmitter);
+        CompletableFuture.runAsync(() -> {
+            try {
+                execute(userPrompt, sink);
+            } finally {
+                if (onFinish != null) {
+                    try {
+                        onFinish.run();
+                    } catch (Exception e) {
+                        log.warn("onFinish 回调执行失败", e);
+                    }
+                }
+            }
+        });
+    }
+
     // ===================================================================
     //                       核心执行流程（统一）
     // ===================================================================

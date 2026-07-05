@@ -54,7 +54,13 @@ export const chatWithManus = (message, chatId) => {
   return connectSSE('/ai/manus/chat', { message, chatId })
 }
 
+// Trace 管理接口
+export const fetchTraces = () => request.get('/admin/traces')
+export const fetchTraceDetail = (traceId) => request.get(`/admin/traces/${traceId}`)
+
 export default {
   chatWithLoveApp,
-  chatWithManus
-} 
+  chatWithManus,
+  fetchTraces,
+  fetchTraceDetail
+}

@@ -66,15 +66,17 @@ public class AgentHarness {
 
     /**
      * 流式运行代理（带全链路追踪）
+     * <p>
+     * 由 Harness 创建 SseEmitter 并先注册 Trace 回调，再委托 Agent 异步执行，
+     * 避免 Agent 异步线程在回调注册前就完成导致 Trace 丢失的竞态问题。
      */
     public SseEmitter runStream(String message, String chatId) {
         TraceCollector traceCollector = createTraceCollector(message, chatId);
-
         YuManus yuManus = buildAgent(chatId, traceCollector);
-        SseEmitter emitter = yuManus.runStream(message);
 
-        emitter.onCompletion(() -> finalizeTrace(traceCollector));
-        emitter.onTimeout(() -> finalizeTrace(traceCollector));
+        SseEmitter emitter = new SseEmitter(300_000L);
+
+        yuManus.runStreamWithEmitter(message, emitter, () -> finalizeTrace(traceCollector));
 
         return emitter;
     }
