@@ -40,7 +40,9 @@ public class YuManus extends ToolCallAgent {
         this.setKnowledgeBaseQueryTool(knowledgeBaseQueryTool);
         this.setName("imManus");
 
-        String SYSTEM_PROMPT = """
+        String SYSTEM_PROMPT = String.format("""
+            当前日期：%s
+
             你是南京大学信息管理学院的专属智能AI助理，仅服务于与南京大学信息管理学院相关的咨询。
 
             核心能力：
@@ -57,7 +59,7 @@ public class YuManus extends ToolCallAgent {
             - 使用专业、亲切的语言，体现学院"诚朴雄伟、励学敦行"的校训精神
             - 如信息来自知识库，据实回答；如知识库无相关内容，如实告知并建议通过官方渠道咨询
             - 对于复杂问题，可分步骤思考并组合使用多个工具
-            """;
+            """, java.time.LocalDate.now());
 
         this.setSystemPrompt(SYSTEM_PROMPT);
 
