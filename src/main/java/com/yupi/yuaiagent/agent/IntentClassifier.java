@@ -95,8 +95,8 @@ public class IntentClassifier {
 
                 意图类型说明：
                 - CHAT：闲聊、问候、感谢、日常寒暄等非业务问题
-                - KNOWLEDGE：询问南京大学信息管理学院相关的知识，如学院介绍、专业设置、师资力量、招生信息、科研成果、校园生活等
-                - TASK：需要执行复杂操作的任务，如搜索网络信息、生成文件/PDF、下载资源、操作终端等
+                - KNOWLEDGE：仅限从本地知识库中检索已有内容来回答的问题，如学院介绍、专业设置、师资力量、招生信息、科研成果、校园生活等。注意：如果用户要求从网站/官网获取、检索、爬取最新或实时信息，应归为 TASK 而非 KNOWLEDGE
+                - TASK：需要联网搜索、访问网站、爬取网页等需要执行外部操作的任务
                 - REJECT：涉及违规、隐私、政治敏感或完全超出服务范围的问题
 
                 置信度说明：
@@ -108,8 +108,8 @@ public class IntentClassifier {
                 用户输入：信管学院的研究生导师有哪些？
                 {"intent": "KNOWLEDGE", "confidence": 0.95, "runnerUp": null}
 
-                用户输入：帮我搜索一下最新的深度学习论文并生成总结PDF
-                {"intent": "TASK", "confidence": 0.9, "runnerUp": "KNOWLEDGE"}
+                用户输入：从信管官网检索最新公告给我
+                {"intent": "TASK", "confidence": 0.95, "runnerUp": null}
 
                 用户输入：今天天气怎么样
                 {"intent": "REJECT", "confidence": 0.85, "runnerUp": "CHAT"}
