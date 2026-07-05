@@ -16,7 +16,8 @@
           <div class="sender-label">{{ msg.isUser ? '我' : '南大信管 · AI 智能体' }}</div>
           <div class="message-bubble" :class="msg.isUser ? 'bubble-user' : 'bubble-ai'">
             <div class="message-content">
-              <template v-if="msg.content">{{ msg.content }}</template>
+              <template v-if="msg.isUser">{{ msg.content }}</template>
+              <div v-else-if="msg.content" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
               <span
                 v-if="!msg.isUser && connectionStatus === 'connecting' && index === messages.length - 1 && msg.content"
                 class="typing-indicator"
@@ -92,7 +93,18 @@
 
 <script setup>
 import { ref, nextTick, watch, computed } from 'vue'
+import { marked } from 'marked'
 import AiAvatarFallback from './AiAvatarFallback.vue'
+
+marked.setOptions({
+  breaks: true,
+  gfm: true
+})
+
+const renderMarkdown = (text) => {
+  if (!text) return ''
+  return marked.parse(text)
+}
 
 const props = defineProps({
   messages: {
@@ -278,9 +290,102 @@ watch(() => props.messages.map(m => m.content).join(''), scrollToBottom)
 .message-content {
   font-size: 15px;
   line-height: 1.75;
-  white-space: pre-wrap;
   word-break: break-word;
   text-align: left;
+}
+
+.bubble-user .message-content {
+  white-space: pre-wrap;
+}
+
+/* Markdown 渲染样式 */
+.markdown-body {
+  line-height: 1.7;
+}
+
+.markdown-body :deep(p) {
+  margin: 0.4em 0;
+}
+
+.markdown-body :deep(p:first-child) {
+  margin-top: 0;
+}
+
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3),
+.markdown-body :deep(h4) {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.markdown-body :deep(h1) { font-size: 1.3em; }
+.markdown-body :deep(h2) { font-size: 1.15em; }
+.markdown-body :deep(h3) { font-size: 1.05em; }
+
+.markdown-body :deep(strong) {
+  font-weight: 600;
+  color: var(--nju-navy);
+}
+
+.markdown-body :deep(em) {
+  font-style: italic;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  margin: 0.4em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-body :deep(li) {
+  margin: 0.2em 0;
+}
+
+.markdown-body :deep(code) {
+  background: rgba(27, 58, 112, 0.06);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+}
+
+.markdown-body :deep(pre) {
+  background: #f6f8fc;
+  border: 1px solid var(--nju-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+
+.markdown-body :deep(pre code) {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.markdown-body :deep(blockquote) {
+  border-left: 3px solid var(--nju-blue-2);
+  margin: 0.5em 0;
+  padding: 0.3em 0 0.3em 12px;
+  color: var(--nju-text-soft);
+}
+
+.markdown-body :deep(a) {
+  color: var(--nju-blue-2);
+  text-decoration: underline;
+}
+
+.markdown-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--nju-border);
+  margin: 0.8em 0;
 }
 
 .bubble-user .message-content {

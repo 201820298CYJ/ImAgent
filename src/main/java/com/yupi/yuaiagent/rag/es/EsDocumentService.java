@@ -31,6 +31,14 @@ public class EsDocumentService {
     }
 
     /**
+     * 清空 ES 索引中的所有文档
+     */
+    public void deleteAll() {
+        repository.deleteAll();
+        log.info("已清空 ES 索引");
+    }
+
+    /**
      * 批量写入文档到 ES
      *
      * @param documents Spring AI Document 列表

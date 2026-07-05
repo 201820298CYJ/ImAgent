@@ -38,7 +38,7 @@ public class DocumentLoader {
             for (Resource resource : resources) {
                 String filename = resource.getFilename();
                 MarkdownDocumentReaderConfig config = MarkdownDocumentReaderConfig.builder()
-                        .withHorizontalRuleCreateDocument(true)
+                        .withHorizontalRuleCreateDocument(false)
                         .withIncludeCodeBlock(false)
                         .withIncludeBlockquote(false)
                         .withAdditionalMetadata("filename", filename)

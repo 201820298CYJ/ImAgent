@@ -24,9 +24,7 @@ public class MarkdownStructureSplitter extends TextSplitter {
     // 匹配 # 标题的正则（匹配行首的 #）
     private static final Pattern HEADER_PATTERN = Pattern.compile("^(#{1,6})\\s+(.*)$", Pattern.MULTILINE);
 
-    // 内部使用 TokenTextSplitter 进行长文本的二级切分
-    // 默认每个 chunk 800 tokens，重叠 100 tokens
-    private final TokenTextSplitter tokenSplitter = new TokenTextSplitter(500, 100, 5, 10000, true);
+    private final TokenTextSplitter tokenSplitter = new TokenTextSplitter(500, 50, 5, 10000, true);
 
     @Override
     protected List<String> splitText(String text) {
